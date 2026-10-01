@@ -58,6 +58,9 @@ import net.minecraft.server.Services;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.vidtu.ias.auth.LoginData;
+//? if >=26.2 {
+import ru.vidtu.ias.auth.yggdrasil.YggdrasilSessionService;
+//?}
 import ru.vidtu.ias.config.IASConfig;
 import ru.vidtu.ias.extension.MinecraftExtension;
 import ru.vidtu.ias.mixins.MinecraftAccessor;
@@ -355,6 +358,9 @@ public final class IASMinecraft {
             // feel free to submit an issue, if someone knows what this is, feel free to PR a fix,
             // I'm too lazy to fix anything related to telemetry or chat signatures/reports.
             boolean online = data.online();
+            // External (Yggdrasil) accounts authenticate against, and are joined through, their own
+            // authentication server, so we must not build the official Mojang-backed services for them.
+            boolean official = online && data.server() == null;
             //? if >=1.21.10 {
             User user = new User(data.name(), data.uuid(), data.token(), Optional.empty(), Optional.empty());
             //?} else
@@ -363,11 +369,20 @@ public final class IASMinecraft {
             // Create various services.
             //? if >=1.21.10 {
             //? if >=26.3 {
-            MinecraftServicesDiscoveryService service = MinecraftServicesDiscoveryService.create(minecraft.getProxy(), online);
+            MinecraftServicesDiscoveryService service = MinecraftServicesDiscoveryService.create(minecraft.getProxy(), official);
             //?} else
-            /*YggdrasilAuthenticationService service = online ? new YggdrasilAuthenticationService(minecraft.getProxy()) : YggdrasilAuthenticationService.createOffline(minecraft.getProxy());*/
+            /*YggdrasilAuthenticationService service = official ? new YggdrasilAuthenticationService(minecraft.getProxy()) : YggdrasilAuthenticationService.createOffline(minecraft.getProxy());*/
             Services services = Services.create(service, minecraft.gameDirectory);
-            CompletableFuture<ProfileResult> profile = CompletableFuture.completedFuture(online ? services.sessionService().fetchProfile(data.uuid(), true) : null);
+            //? if >=26.2 {
+            // Redirect the in-game session of external accounts to their authentication server.
+            // (the in-mod equivalent of what authlib-injector does at launch time)
+            if (data.server() != null) {
+                services = new Services(new YggdrasilSessionService(data.server(), data.token(), services.sessionService()),
+                        services.servicesKeySet(), services.profileRepository(), services.nameToIdCache(), services.profileResolver());
+            }
+            //?}
+            final Services finalServices = services;
+            CompletableFuture<ProfileResult> profile = CompletableFuture.completedFuture(online ? finalServices.sessionService().fetchProfile(data.uuid(), true) : null);
             //?} else {
             /*YggdrasilAuthenticationService service = new YggdrasilAuthenticationService(minecraft.getProxy());
             CompletableFuture<ProfileResult> profile = CompletableFuture.completedFuture(online ? minecraft.getMinecraftSessionService().fetchProfile(data.uuid(), true) : null);*/
@@ -381,7 +396,7 @@ public final class IASMinecraft {
             /*final GameConfig config = new GameConfig(new GameConfig.UserData(user, originalConfig.user.userProperties, originalConfig.user.profileProperties, minecraft.getProxy()), originalConfig.display, originalConfig.location, originalConfig.game, originalConfig.quickPlay);
             *///?}
             //? if >=26.2 {
-            UserApiService apiService = online ? MinecraftAccessor.ias$createUserApiService(service, config) : UserApiService.OFFLINE;
+            UserApiService apiService = official ? MinecraftAccessor.ias$createUserApiService(service, config) : UserApiService.OFFLINE;
             //?} else {
             /*UserApiService apiService = online ? accessor.ias$createUserApiService(service, config) : UserApiService.OFFLINE;
             *///?}
@@ -408,7 +423,7 @@ public final class IASMinecraft {
                 // Flush everything.
                 LOGGER.info("IAS: Flushing user...");
                 //? if >=1.21.10 {
-                accessor.ias$services(services);
+                accessor.ias$services(finalServices);
                 //?}
                 accessor.ias$user(user);
                 accessor.ias$profileFuture(profile);
