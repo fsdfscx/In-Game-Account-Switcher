@@ -347,28 +347,32 @@ public final class YggdrasilAuth {
     }
 
     /**
-     * Refreshes the access token, optionally re-binding the session to the specified character.
+     * Refreshes the access token, optionally binding the session to the specified character.
      * <p>
-     * Some servers bind an access token to a specific character on authenticate/refresh and then
-     * refuse to join with a token that is not bound to the character being joined. Re-binding
-     * through this method makes such tokens usable without the account password.
+     * Some servers bind an access token to a specific character and then refuse to join as any
+     * other character, and only {@code authserver/refresh} can (re)bind it. Note that some
+     * implementations (e.g. Blessing Skin) expect {@code selectedProfile} to be an object with the
+     * {@code id} and {@code name}, rather than a plain UUID string.
      *
      * @param server      Target server
      * @param accessToken Access token to refresh
      * @param clientToken Client token to refresh
-     * @param profileId   Character UUID to re-bind the session to, {@code null} to keep the current one
+     * @param profile     Character to bind the session to, {@code null} to keep the current binding
      * @return Future that will complete with the refreshed session or exceptionally
      */
     @CheckReturnValue
     @NotNull
-    public static CompletableFuture<YggdrasilAuthResult> refresh(@NotNull YggdrasilServer server, @NotNull String accessToken, @NotNull String clientToken, @Nullable UUID profileId) {
+    public static CompletableFuture<YggdrasilAuthResult> refresh(@NotNull YggdrasilServer server, @NotNull String accessToken, @NotNull String clientToken, @Nullable MCProfile profile) {
         // Create the payload.
         JsonObject request = new JsonObject();
         request.addProperty("accessToken", accessToken);
         request.addProperty("clientToken", clientToken);
         request.addProperty("requestUser", true);
-        if (profileId != null) {
-            request.addProperty("selectedProfile", profileId.toString().replace("-", ""));
+        if (profile != null) {
+            JsonObject selected = new JsonObject();
+            selected.addProperty("id", profile.uuid().toString().replace("-", ""));
+            selected.addProperty("name", profile.name());
+            request.add("selectedProfile", selected);
         }
         String payload = GSONUtils.GSON.toJson(request);
 
