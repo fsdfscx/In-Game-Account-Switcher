@@ -40,6 +40,14 @@ public final class FriendlyException extends RuntimeException {
     private final String key;
 
     /**
+     * Additional, externally-provided detail to show to the user. (e.g. the server's error message)
+     * <p>
+     * Unlike the {@link #key}, this is not translatable, because it comes from an external source.
+     */
+    @Nullable
+    private final String detail;
+
+    /**
      * Creates a new exception.
      *
      * @param message Target message
@@ -47,8 +55,7 @@ public final class FriendlyException extends RuntimeException {
      */
     @Contract(pure = true)
     public FriendlyException(@NotNull String message, @NotNull String key) {
-        super(message + " (friendly key: " + key + ")");
-        this.key = key;
+        this(message, null, key, null);
     }
 
     /**
@@ -60,8 +67,22 @@ public final class FriendlyException extends RuntimeException {
      */
     @Contract(pure = true)
     public FriendlyException(@NotNull String message, @Nullable Throwable cause, @NotNull String key) {
+        this(message, cause, key, null);
+    }
+
+    /**
+     * Creates a new exception with an additional detail to show to the user.
+     *
+     * @param message Target message
+     * @param cause   Suppressed exception cause
+     * @param key     Message translation key
+     * @param detail  Additional detail to show to the user (e.g. the server's error message), {@code null} for none
+     */
+    @Contract(pure = true)
+    public FriendlyException(@NotNull String message, @Nullable Throwable cause, @NotNull String key, @Nullable String detail) {
         super(message + " (friendly key: " + key + ")", cause);
         this.key = key;
+        this.detail = detail;
     }
 
     /**
@@ -73,6 +94,17 @@ public final class FriendlyException extends RuntimeException {
     @NotNull
     public String key() {
         return this.key;
+    }
+
+    /**
+     * Gets the additional detail to show to the user.
+     *
+     * @return Detail, {@code null} if none
+     */
+    @Contract(pure = true)
+    @Nullable
+    public String detail() {
+        return this.detail;
     }
 
     /**

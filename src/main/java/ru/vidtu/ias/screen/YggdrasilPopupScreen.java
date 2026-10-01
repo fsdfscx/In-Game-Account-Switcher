@@ -622,9 +622,22 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
         // Show a short stage, with the detailed reason below the panel.
         FriendlyException probable = FriendlyException.friendlyInChain(error);
         String key = probable != null ? probable.key() : "ias.error";
+        Component text = Component.translatable(key);
+
+        // Append the raw server message, if any. (it is often more specific than the key)
+        String detail = probable != null ? probable.detail() : null;
+        if (detail != null) {
+            detail = detail.strip();
+            if (detail.length() > 200) {
+                detail = detail.substring(0, 200) + "...";
+            }
+        }
+        if (detail != null && !detail.isBlank()) {
+            text = text.copy().append("\n").append(Component.literal(detail).withStyle(ChatFormatting.GRAY));
+        }
         synchronized (this.lock) {
             this.stage = Component.translatable("ias.error.short").withStyle(ChatFormatting.RED);
-            this.errorText = Component.translatable(key);
+            this.errorText = text;
             this.label = null;
             this.errorNote = null;
             this.error = 0.0F;

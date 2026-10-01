@@ -39,6 +39,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.channels.UnresolvedAddressException;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -279,7 +280,9 @@ public final class YggdrasilAuth {
                 if (status != 200) {
                     // Parse the error, if any.
                     String error = error(response.body());
-                    throw new FriendlyException("Yggdrasil authenticate failed: " + status + ", error: " + error, "ias.error.yggdrasil.auth");
+                    String detail = errorMessage(response.body());
+                    throw new FriendlyException("Yggdrasil authenticate failed: " + status + ", error: " + error, null,
+                            authKey(detail != null ? detail : error), detail);
                 }
 
                 // Decode the result and return it.
@@ -361,7 +364,8 @@ public final class YggdrasilAuth {
                 // Check the code.
                 int status = response.statusCode();
                 if (status != 200) {
-                    throw new FriendlyException("Yggdrasil refresh failed: " + status, "ias.error.yggdrasil.session");
+                    String detail = errorMessage(response.body());
+                    throw new FriendlyException("Yggdrasil refresh failed: " + status, null, "ias.error.yggdrasil.session", detail);
                 }
 
                 // Decode the result and return it.
@@ -456,6 +460,65 @@ public final class YggdrasilAuth {
         } catch (Throwable t) {
             return null;
         }
+    }
+
+    /**
+     * Extracts only the human-readable {@code errorMessage} from the Yggdrasil error response.
+     *
+     * @param body Response body
+     * @return Extracted message, {@code null} if unable to extract
+     */
+    @Contract(pure = true)
+    @Nullable
+    private static String errorMessage(@NotNull String body) {
+        try {
+            JsonObject json = GSONUtils.GSON.fromJson(body, JsonObject.class);
+            if (json == null) return null;
+            if (json.has("errorMessage") && json.get("errorMessage").isJsonPrimitive()) {
+                return json.get("errorMessage").getAsString();
+            }
+            return null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * Picks the user-facing translation key for a failed authentication.
+     * <p>
+     * The Yggdrasil protocol only defines a coarse {@code error} code
+     * ({@code ForbiddenOperationException} is used both for wrong credentials and for rate
+     * limiting), so the human-readable message has to be inspected. Unknown messages fall back
+     * to the generic authentication error; and, regardless of the key, the original message is
+     * always shown to the user as-is.
+     *
+     * @param error Human-readable server error, {@code null} if unknown
+     * @return Message translation key
+     */
+    @Contract(pure = true)
+    @NotNull
+    private static String authKey(@Nullable String error) {
+        // Nothing to inspect.
+        if (error == null || error.isBlank()) return "ias.error.yggdrasil.auth";
+        String lower = error.toLowerCase(Locale.ROOT);
+
+        // Too many requests. (e.g. Blessing Skin rate limiting the authenticate endpoint)
+        if (lower.contains("频繁") || lower.contains("too many") || lower.contains("rate limit") || lower.contains("rate-limit")) {
+            return "ias.error.yggdrasil.ratelimit";
+        }
+
+        // Banned or locked. (checked before the credentials, as those messages mention the account)
+        if (lower.contains("封禁") || lower.contains("锁定") || lower.contains("banned") || lower.contains("locked")) {
+            return "ias.error.yggdrasil.banned";
+        }
+
+        // Wrong credentials.
+        if (lower.contains("密码") || lower.contains("账号") || lower.contains("credentials") || lower.contains("password") || lower.contains("username")) {
+            return "ias.error.yggdrasil.credentials";
+        }
+
+        // Generic.
+        return "ias.error.yggdrasil.auth";
     }
 
     /**

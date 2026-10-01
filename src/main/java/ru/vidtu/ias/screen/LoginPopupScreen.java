@@ -480,7 +480,20 @@ final class LoginPopupScreen extends Screen implements LoginHandler {
         // Flush the stage.
         FriendlyException probable = FriendlyException.friendlyInChain(error);
         String key = probable != null ? probable.key() : "ias.error";
-        Component component = Component.translatable(key).withStyle(ChatFormatting.RED);
+        Component component = Component.translatable(key);
+
+        // Append the raw server message, if any. (it is often more specific than the key)
+        String detail = probable != null ? probable.detail() : null;
+        if (detail != null) {
+            detail = detail.strip();
+            if (detail.length() > 200) {
+                detail = detail.substring(0, 200) + "...";
+            }
+        }
+        if (detail != null && !detail.isBlank()) {
+            component = component.copy().append("\n").append(Component.literal(detail).withStyle(ChatFormatting.GRAY));
+        }
+        component = component.copy().withStyle(ChatFormatting.RED);
         synchronized (this.lock) {
             this.stage = component;
             this.label = null;
