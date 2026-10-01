@@ -25,6 +25,7 @@ import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.vidtu.ias.IAS;
+import ru.vidtu.ias.account.Account;
 import ru.vidtu.ias.account.YggdrasilAccount;
 import ru.vidtu.ias.auth.handlers.CreateHandler;
 import ru.vidtu.ias.auth.microsoft.fields.MCProfile;
@@ -33,6 +34,8 @@ import ru.vidtu.ias.utils.exceptions.FriendlyException;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
@@ -94,55 +97,28 @@ public final class YggdrasilCreate {
             // Stop if cancelled.
             if (handler.cancelled()) return CompletableFuture.<Void>completedFuture(null);
 
-            // Authenticate.
+            // Authenticate. (this also gives us the characters of the account)
             LOGGER.info("IAS: Authenticating with '{}'...", server);
             handler.stage(YggdrasilAccount.AUTHENTICATING, server.name());
             String clientToken = UUID.randomUUID().toString();
-            return YggdrasilAuth.authenticate(server, username, password, clientToken, null).thenComposeAsync(result -> {
-                // Stop if cancelled.
-                if (handler.cancelled()) return CompletableFuture.<YggdrasilSession>completedFuture(null);
+            return YggdrasilAuth.authenticate(server, username, password, clientToken, null)
+                    .thenComposeAsync(result -> {
+                        // Stop if cancelled.
+                        if (handler.cancelled()) return CompletableFuture.<List<Account>>completedFuture(null);
 
-                // The account has no characters at all.
-                if (result.empty()) {
-                    throw new FriendlyException("The account has no characters.", "ias.error.yggdrasil.profile");
-                }
+                        // Authenticate every character. (the session is bound to a character)
+                        handler.stage(YggdrasilAccount.ENCRYPTING);
+                        return create(server, username, password, savePassword, crypt, clientToken, result);
+                    }, IAS.executor())
+                    .thenAcceptAsync(accounts -> {
+                        // Stop if cancelled.
+                        if (accounts == null || handler.cancelled()) return;
 
-                // The server already selected a character for us.
-                if (result.selectedProfile() != null) {
-                    return CompletableFuture.completedFuture(YggdrasilSession.of(result, result.selectedProfile()));
-                }
-
-                // Only one character - select it silently.
-                if (result.availableProfiles().size() == 1) {
-                    return select(server, username, password, clientToken, result.availableProfiles().get(0));
-                }
-
-                // Multiple characters - ask the user which one to use.
-                LOGGER.info("IAS: The account has {} characters, asking the user...", result.availableProfiles().size());
-                return handler.selectProfile(result.availableProfiles()).thenComposeAsync(chosen -> {
-                    // Stop on cancel.
-                    if (chosen == null || handler.cancelled()) {
-                        throw new FriendlyException("Character was not selected.", "ias.error.yggdrasil.profile");
-                    }
-
-                    // Select and continue.
-                    return select(server, username, password, clientToken, chosen);
-                }, IAS.executor());
-            }, IAS.executor()).thenAcceptAsync(session -> {
-                // Stop if cancelled.
-                if (session == null || handler.cancelled()) return;
-
-                // Encrypt the account data. (the password is only stored if the user opted in)
-                LOGGER.info("IAS: Encrypting tokens...");
-                handler.stage(YggdrasilAccount.ENCRYPTING);
-                byte[] data = encrypt(crypt, username, savePassword ? password : "", session.accessToken(), session.clientToken());
-
-                // Create the account.
-                LOGGER.info("IAS: Successfully added {}", session);
-                handler.stage(YggdrasilAccount.FINALIZING);
-                YggdrasilAccount account = new YggdrasilAccount(crypt.insecure(), server.apiRoot(), server.name(), session.uuid(), session.name(), data);
-                handler.successAccount(account);
-            }, IAS.executor());
+                        // Hand the accounts over.
+                        LOGGER.info("IAS: Successfully added {} character(s) of '{}'.", accounts.size(), server.name());
+                        handler.stage(YggdrasilAccount.FINALIZING);
+                        handler.successAccounts(accounts);
+                    }, IAS.executor());
         }, IAS.executor()).exceptionallyAsync(t -> {
             // Handle error.
             handler.error(new RuntimeException("Unable to create a Yggdrasil account.", t));
@@ -153,25 +129,66 @@ public final class YggdrasilCreate {
     }
 
     /**
-     * Re-authenticates with the chosen character selected.
+     * Authenticates every character of the account and builds an account for each of them.
      *
      * @param server      Target server
      * @param username    Account username
      * @param password    Account password
+     * @param savePassword Whether to persist the password
+     * @param crypt       Crypt to encrypt the accounts with
      * @param clientToken Client token
-     * @param profile     Character to select
-     * @return Future that will complete with the session bound to the character
+     * @param result      Result of the initial authentication
+     * @return Future that will complete with the created accounts
      */
     @CheckReturnValue
     @NotNull
-    private static CompletableFuture<YggdrasilSession> select(@NotNull YggdrasilServer server, @NotNull String username, @NotNull String password, @NotNull String clientToken, @NotNull MCProfile profile) {
+    private static CompletableFuture<List<Account>> create(@NotNull YggdrasilServer server, @NotNull String username, @NotNull String password, boolean savePassword, @NotNull Crypt crypt, @NotNull String clientToken, @NotNull YggdrasilAuthResult result) {
+        // Determine the characters to add. (every character of the account)
+        List<MCProfile> profiles = new ArrayList<>(result.availableProfiles());
+        MCProfile selected = result.selectedProfile();
+        if (selected != null && profiles.stream().noneMatch(profile -> profile.uuid().equals(selected.uuid()))) {
+            profiles.add(selected);
+        }
+        if (profiles.isEmpty()) {
+            throw new FriendlyException("The account has no characters.", "ias.error.yggdrasil.profile");
+        }
+
+        // Authenticate each character, one by one. (to be gentle with the server rate limits)
+        CompletableFuture<List<Account>> chain = CompletableFuture.completedFuture(new ArrayList<>(profiles.size()));
+        for (MCProfile profile : profiles) {
+            chain = chain.thenComposeAsync(accounts -> authenticate(server, username, password, savePassword, crypt, clientToken, profile).thenApplyAsync(account -> {
+                accounts.add(account);
+                return accounts;
+            }, IAS.executor()), IAS.executor());
+        }
+        return chain;
+    }
+
+    /**
+     * Authenticates the account with the character selected and builds the account for it.
+     *
+     * @param server       Target server
+     * @param username     Account username
+     * @param password     Account password
+     * @param savePassword Whether to persist the password
+     * @param crypt        Crypt to encrypt the account with
+     * @param clientToken  Client token
+     * @param profile      Character to bind to
+     * @return Future that will complete with the created account
+     */
+    @CheckReturnValue
+    @NotNull
+    private static CompletableFuture<YggdrasilAccount> authenticate(@NotNull YggdrasilServer server, @NotNull String username, @NotNull String password, boolean savePassword, @NotNull Crypt crypt, @NotNull String clientToken, @NotNull MCProfile profile) {
         // Send the request.
         return YggdrasilAuth.authenticate(server, username, password, clientToken, profile.uuid()).thenApplyAsync(result -> {
-            // Prefer the server-reported profile, fall back to the requested one.
+            // Prefer the character reported by the server, fall back to the requested one.
             MCProfile selected = result.selectedProfile() != null ? result.selectedProfile() : profile;
 
+            // Encrypt the account data. (the password is only stored if the user opted in)
+            byte[] data = encrypt(crypt, username, savePassword ? password : "", result.accessToken(), result.clientToken());
+
             // Create and return.
-            return YggdrasilSession.of(result, selected);
+            return new YggdrasilAccount(crypt.insecure(), server.apiRoot(), server.name(), selected.uuid(), selected.name(), data);
         }, IAS.executor());
     }
 

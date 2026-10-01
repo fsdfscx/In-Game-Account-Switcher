@@ -19,15 +19,12 @@
 
 package ru.vidtu.ias.auth.handlers;
 
-import com.google.errorprone.annotations.CheckReturnValue;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import ru.vidtu.ias.account.Account;
 import ru.vidtu.ias.account.MicrosoftAccount;
-import ru.vidtu.ias.auth.microsoft.fields.MCProfile;
 
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 
 /**
  * Handler for creating accounts.
@@ -78,16 +75,15 @@ public interface CreateHandler {
     }
 
     /**
-     * Requests the character (profile) to use, when the account owns several of them.
+     * Called when several accounts have been created at once. (e.g. every character of an
+     * external account)
      *
-     * @param profiles Characters available on the account
-     * @return Future that will complete with the chosen character, with {@code null} on cancel, exceptionally on error
-     * @implNote Completes with {@code null} (cancel) by default, to keep the older handlers source-compatible
+     * @param accounts Created accounts
      */
-    @CheckReturnValue
-    @NotNull
-    default CompletableFuture<MCProfile> selectProfile(@NotNull List<MCProfile> profiles) {
-        return CompletableFuture.completedFuture(null);
+    default void successAccounts(@NotNull List<Account> accounts) {
+        for (Account account : accounts) {
+            this.successAccount(account);
+        }
     }
 
     /**

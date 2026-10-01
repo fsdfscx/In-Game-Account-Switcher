@@ -30,14 +30,12 @@ import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
 import net.minecraft.util.FormattedCharSequence;
-import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix3x2fStack;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.vidtu.ias.account.Account;
 import ru.vidtu.ias.account.MicrosoftAccount;
 import ru.vidtu.ias.auth.handlers.CreateHandler;
-import ru.vidtu.ias.auth.microsoft.fields.MCProfile;
 import ru.vidtu.ias.auth.yggdrasil.YggdrasilCreate;
 import ru.vidtu.ias.config.IASConfig;
 import ru.vidtu.ias.crypt.Crypt;
@@ -48,7 +46,6 @@ import ru.vidtu.ias.utils.exceptions.FriendlyException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -128,16 +125,6 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
     private boolean savePassword = false;
 
     /**
-     * Character (profile) selection future, {@code null} unless the character is being chosen.
-     */
-    private CompletableFuture<MCProfile> profileFuture;
-
-    /**
-     * Characters (profiles) to choose from.
-     */
-    private List<MCProfile> profiles;
-
-    /**
      * Whether the account is already being added and the UI should be locked.
      */
     private boolean locked = false;
@@ -209,31 +196,6 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
         // Layout.
         int cx = this.width / 2;
         int cy = this.height / 2;
-
-        // Ask for the character, if required. (accounts with multiple characters)
-        if (this.profileFuture != null) {
-            this.server = null;
-            this.username = null;
-            this.password = null;
-            this.done = null;
-            this.savePasswordButton = null;
-            this.cryptPassword = null;
-            this.cryptPasswordTip = null;
-
-            // Add a button per character.
-            List<MCProfile> profiles = this.profiles != null ? this.profiles : List.of();
-            int y = cy - (profiles.size() * 24) / 2;
-            for (MCProfile profile : profiles) {
-                PopupButton button = new PopupButton(cx - 100, y, 200, 20, Component.literal(profile.name()), btn -> this.pickProfile(profile), Supplier::get);
-                button.color(0.5F, 0.8F, 1.0F, true);
-                this.addRenderableWidget(button);
-                y += 24;
-            }
-
-            // Add cancel button.
-            this.addRenderableWidget(new PopupButton(cx - 75, y + 8, 150, 20, CommonComponents.GUI_CANCEL, btn -> this.pickProfile(null), Supplier::get));
-            return;
-        }
 
         // Ask for the Crypt password first, if not resolved yet.
         if (this.crypt == null) {
@@ -329,55 +291,6 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
         this.cryptPasswordTip = null;
 
         // Rebuild the UI.
-        this.init(this.width, this.height);
-    }
-
-    /**
-     * Asks the user which character to use, when the account owns several of them.
-     *
-     * @param profiles Characters available on the account
-     * @return Future that will complete with the chosen character, with {@code null} on cancel
-     */
-    @Override
-    public CompletableFuture<MCProfile> selectProfile(List<MCProfile> profiles) {
-        // Bruh.
-        assert this.minecraft != null;
-
-        // Create the future.
-        this.profileFuture = new CompletableFuture<>();
-        this.profiles = profiles;
-
-        // Show the selection title.
-        this.stage = Component.translatable("ias.yggdrasil.profile").withStyle(ChatFormatting.YELLOW);
-        synchronized (this.lock) {
-            this.label = null;
-        }
-
-        // Redraw on main.
-        this.minecraft.execute(() -> this.init(this.width, this.height));
-
-        // Return it.
-        return this.profileFuture;
-    }
-
-    /**
-     * Completes the character selection.
-     *
-     * @param profile Chosen character, {@code null} on cancel
-     */
-    private void pickProfile(@Nullable MCProfile profile) {
-        // Bruh.
-        assert this.minecraft != null;
-
-        // Complete the future.
-        CompletableFuture<MCProfile> future = this.profileFuture;
-        this.profileFuture = null;
-        this.profiles = null;
-        if (future != null) {
-            future.complete(profile);
-        }
-
-        // Redraw.
         this.init(this.width, this.height);
     }
 
@@ -488,20 +401,6 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
         pose.scale(2.0F, 2.0F);
         graphics.centeredText(this.font, this.title, this.width / 4, this.height / 4 - (cryptStep ? 49 : 90) / 2, 0xFF_FF_FF_FF);
         pose.popMatrix();
-
-        // Render the character selection step.
-        if (this.profileFuture != null) {
-            synchronized (this.lock) {
-                // Bake the label, if needed.
-                if (this.label == null) {
-                    this.label = MultiLineLabel.create(this.font, Objects.requireNonNullElse(this.stage, Component.empty()), 250);
-                }
-
-                // Render it above the character buttons.
-                IStonecutter.renderMultilineLabelCentered(this.label, graphics, this.width / 2, this.height / 2 - 50);
-            }
-            return;
-        }
 
         // Render the Crypt password step.
         if (cryptStep) {
@@ -639,6 +538,27 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
 
             // Call the callback.
             this.handler.accept(account);
+        });
+    }
+
+    @Override
+    public void successAccounts(List<Account> accounts) {
+        // Bruh.
+        assert this.minecraft != null;
+
+        // Skip if not current screen.
+        if (this != this.currentScreen()) return;
+
+        // Schedule on main and add every account in one go, because the callback may close the
+        // screen and the remaining accounts would be skipped by the check above.
+        this.minecraft.execute(() -> {
+            // Skip if not current screen.
+            if (this != this.currentScreen()) return;
+
+            // Call the callback.
+            for (Account account : accounts) {
+                this.handler.accept(account);
+            }
         });
     }
 
