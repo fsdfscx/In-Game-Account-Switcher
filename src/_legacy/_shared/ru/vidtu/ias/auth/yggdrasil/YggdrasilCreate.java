@@ -100,15 +100,14 @@ public final class YggdrasilCreate {
             // Authenticate. (this also gives us the characters of the account)
             LOGGER.info("IAS: Authenticating with '{}'...", server);
             handler.stage(YggdrasilAccount.AUTHENTICATING, server.name());
-            String clientToken = UUID.randomUUID().toString();
-            return YggdrasilAuth.authenticate(server, username, password, clientToken, null)
+            return YggdrasilAuth.authenticate(server, username, password, UUID.randomUUID().toString(), null)
                     .thenComposeAsync(result -> {
                         // Stop if cancelled.
                         if (handler.cancelled()) return CompletableFuture.<List<Account>>completedFuture(null);
 
                         // Authenticate every character. (the session is bound to a character)
                         handler.stage(YggdrasilAccount.ENCRYPTING);
-                        return create(server, username, password, savePassword, crypt, clientToken, result);
+                        return create(server, username, password, savePassword, crypt, result);
                     }, IAS.executor())
                     .thenAcceptAsync(accounts -> {
                         // Stop if cancelled.
@@ -136,13 +135,12 @@ public final class YggdrasilCreate {
      * @param password    Account password
      * @param savePassword Whether to persist the password
      * @param crypt       Crypt to encrypt the accounts with
-     * @param clientToken Client token
      * @param result      Result of the initial authentication
      * @return Future that will complete with the created accounts
      */
     @CheckReturnValue
     @NotNull
-    private static CompletableFuture<List<Account>> create(@NotNull YggdrasilServer server, @NotNull String username, @NotNull String password, boolean savePassword, @NotNull Crypt crypt, @NotNull String clientToken, @NotNull YggdrasilAuthResult result) {
+    private static CompletableFuture<List<Account>> create(@NotNull YggdrasilServer server, @NotNull String username, @NotNull String password, boolean savePassword, @NotNull Crypt crypt, @NotNull YggdrasilAuthResult result) {
         // Determine the characters to add. (every character of the account)
         List<MCProfile> profiles = new ArrayList<>(result.availableProfiles());
         MCProfile selected = result.selectedProfile();
@@ -156,7 +154,7 @@ public final class YggdrasilCreate {
         // Authenticate each character, one by one. (to be gentle with the server rate limits)
         CompletableFuture<List<Account>> chain = CompletableFuture.completedFuture(new ArrayList<>(profiles.size()));
         for (MCProfile profile : profiles) {
-            chain = chain.thenComposeAsync(accounts -> authenticate(server, username, password, savePassword, crypt, clientToken, profile).thenApplyAsync(account -> {
+            chain = chain.thenComposeAsync(accounts -> authenticate(server, username, password, savePassword, crypt, profile).thenApplyAsync(account -> {
                 accounts.add(account);
                 return accounts;
             }, IAS.executor()), IAS.executor());
@@ -172,13 +170,19 @@ public final class YggdrasilCreate {
      * @param password     Account password
      * @param savePassword Whether to persist the password
      * @param crypt        Crypt to encrypt the account with
-     * @param clientToken  Client token
      * @param profile      Character to bind to
      * @return Future that will complete with the created account
      */
     @CheckReturnValue
     @NotNull
-    private static CompletableFuture<YggdrasilAccount> authenticate(@NotNull YggdrasilServer server, @NotNull String username, @NotNull String password, boolean savePassword, @NotNull Crypt crypt, @NotNull String clientToken, @NotNull MCProfile profile) {
+    private static CompletableFuture<YggdrasilAccount> authenticate(@NotNull YggdrasilServer server, @NotNull String username, @NotNull String password, boolean savePassword, @NotNull Crypt crypt, @NotNull MCProfile profile) {
+        // Use a distinct client token per character, so that the server keeps a separate session for
+        // each of them. Reusing a single client token makes servers that store one session per
+        // (account, client token) - e.g. Blessing Skin - overwrite the bound character on every
+        // request, which then makes joining any but the last character fail on the server with a
+        // token/character mismatch.
+        String clientToken = UUID.randomUUID().toString();
+
         // Send the request.
         return YggdrasilAuth.authenticate(server, username, password, clientToken, profile.uuid()).thenApplyAsync(result -> {
             // Prefer the character reported by the server, fall back to the requested one.
