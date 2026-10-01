@@ -384,7 +384,7 @@ public final class IASMinecraft {
             // Redirect the in-game session of external accounts to their authentication server.
             // (the in-mod equivalent of what authlib-injector does at launch time)
             if (data.server() != null) {
-                services = new Services(new YggdrasilSessionService(data.server(), data.token(), services.sessionService()),
+                services = new Services(new YggdrasilSessionService(data.server(), data.token(), data.clientToken(), services.sessionService()),
                         services.servicesKeySet(), services.profileRepository(), services.nameToIdCache(), services.profileResolver());
             }
             //?}

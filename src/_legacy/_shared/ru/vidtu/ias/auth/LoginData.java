@@ -29,14 +29,16 @@ import java.util.UUID;
 /**
  * Data provided for {@link Account} for authentication in-game.
  *
- * @param name   Player name
- * @param uuid   Player UUID
- * @param token  Session access token
- * @param online Whether the account type is online
- * @param server API root of the external (Yggdrasil) authentication server, {@code null} for official/offline accounts
+ * @param name        Player name
+ * @param uuid        Player UUID
+ * @param token       Session access token
+ * @param online      Whether the account type is online
+ * @param server      API root of the external (Yggdrasil) authentication server, {@code null} for official/offline accounts
+ * @param clientToken Session client token of the external account, {@code null} if unknown
  * @author VidTu
  */
-public record LoginData(@NotNull String name, @NotNull UUID uuid, @NotNull String token, boolean online, @Nullable String server) {
+public record LoginData(@NotNull String name, @NotNull UUID uuid, @NotNull String token, boolean online,
+                        @Nullable String server, @Nullable String clientToken) {
     /**
      * Creates new login data for an official/offline account. (no external server)
      *
@@ -47,7 +49,21 @@ public record LoginData(@NotNull String name, @NotNull UUID uuid, @NotNull Strin
      */
     @Contract(pure = true)
     public LoginData(@NotNull String name, @NotNull UUID uuid, @NotNull String token, boolean online) {
-        this(name, uuid, token, online, null);
+        this(name, uuid, token, online, null, null);
+    }
+
+    /**
+     * Creates new login data for an external account with an unknown client token.
+     *
+     * @param name   Player name
+     * @param uuid   Player UUID
+     * @param token  Session access token
+     * @param online Whether the account type is online
+     * @param server API root of the external (Yggdrasil) authentication server
+     */
+    @Contract(pure = true)
+    public LoginData(@NotNull String name, @NotNull UUID uuid, @NotNull String token, boolean online, @Nullable String server) {
+        this(name, uuid, token, online, server, null);
     }
 
     @Contract(pure = true)

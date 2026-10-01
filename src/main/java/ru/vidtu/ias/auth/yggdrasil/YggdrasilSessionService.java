@@ -61,6 +61,7 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -126,6 +127,14 @@ public final class YggdrasilSessionService implements SessionService {
     private final String accessToken;
 
     /**
+     * Session client token of the current account, {@code null} if unknown.
+     * <p>
+     * Needed to re-bind the session to the joined character with {@code authserver/refresh}.
+     */
+    @Nullable
+    private final String clientToken;
+
+    /**
      * Original session service, used for the non-session-specific methods.
      */
     //? if >=26.3 {
@@ -141,16 +150,18 @@ public final class YggdrasilSessionService implements SessionService {
      *
      * @param server      API root of the authentication server
      * @param accessToken Session access token
+     * @param clientToken Session client token, {@code null} if unknown
      * @param delegate    Original session service (for skin/texture/key helpers)
      */
     @Contract(pure = true)
     //? if >=26.3 {
-    public YggdrasilSessionService(@NotNull String server, @NotNull String accessToken, @NotNull SessionService delegate) {
+    public YggdrasilSessionService(@NotNull String server, @NotNull String accessToken, @Nullable String clientToken, @NotNull SessionService delegate) {
     //?} else {
-    /*public YggdrasilSessionService(@NotNull String server, @NotNull String accessToken, @NotNull MinecraftSessionService delegate) {*/
+    /*public YggdrasilSessionService(@NotNull String server, @NotNull String accessToken, @Nullable String clientToken, @NotNull MinecraftSessionService delegate) {*/
     //?}
         this.server = new YggdrasilServer(server, "", false);
         this.accessToken = accessToken;
+        this.clientToken = clientToken;
         this.delegate = delegate;
     }
 
@@ -164,6 +175,47 @@ public final class YggdrasilSessionService implements SessionService {
      */
     @Override
     public void joinServer(@NotNull UUID profileId, @NotNull String accessToken, @NotNull String serverId) throws AuthenticationException {
+        // Send the request.
+        String token = accessToken;
+        HttpResponse<String> response = this.join(profileId, token, serverId);
+
+        // Check the code. (204 No Content on success)
+        if (response.statusCode() == 204) return;
+
+        // Retry once with a session re-bound to the requested character. Some servers bind an
+        // access token to a specific character and then refuse to join with a token that is not
+        // bound to the character that is being joined.
+        String rebound = this.rebind(profileId, token);
+        if (rebound != null && !rebound.equals(token)) {
+            token = rebound;
+            response = this.join(profileId, token, serverId);
+            if (response.statusCode() == 204) return;
+        }
+
+        // Rethrow, trying to expose the server-provided reason (which is much more readable than
+        // the raw JSON body) and to remove sensitive data.
+        String detail = YggdrasilAuth.errorMessage(response.body());
+        String message = "Unable to join the server via '" + this.server + "': " + response.statusCode()
+                + (detail != null ? ", error: " + detail : ", body: " + response.body());
+        message = scrub(message, token);
+        message = scrub(message, accessToken);
+        message = scrub(message, this.accessToken);
+        message = scrub(message, this.clientToken);
+        LOGGER.warn("IAS: {}", message);
+        throw new AuthenticationException(message);
+    }
+
+    /**
+     * Sends a single join request to the authentication server.
+     *
+     * @param profileId   Player UUID
+     * @param accessToken Session access token
+     * @param serverId    Server hash
+     * @return Response
+     * @throws AuthenticationUnavailableException On connection error
+     */
+    @NotNull
+    private HttpResponse<String> join(@NotNull UUID profileId, @NotNull String accessToken, @NotNull String serverId) throws AuthenticationUnavailableException {
         // Create the payload.
         JsonObject request = new JsonObject();
         request.addProperty("accessToken", accessToken);
@@ -172,9 +224,8 @@ public final class YggdrasilSessionService implements SessionService {
         String payload = GSONUtils.GSON.toJson(request);
 
         // Send the request.
-        HttpResponse<String> response;
         try {
-            response = CLIENT.send(HttpRequest.newBuilder()
+            return CLIENT.send(HttpRequest.newBuilder()
                     .uri(URI.create(this.server.endpoint("sessionserver/session/minecraft/join")))
                     .header("User-Agent", IAS.USER_AGENT)
                     .header("Accept", "application/json")
@@ -186,16 +237,45 @@ public final class YggdrasilSessionService implements SessionService {
             // Rethrow, trying to remove sensitive data.
             throw new AuthenticationUnavailableException("Unable to join the server via '" + this.server + "'.", t);
         }
+    }
 
-        // Check the code. (204 No Content on success)
-        int code = response.statusCode();
-        if (code == 204) return;
+    /**
+     * Tries to re-bind the session to the specified character. (best-effort, for the join recovery)
+     *
+     * @param profileId   Character UUID to bind the session to
+     * @param accessToken Current session access token
+     * @return Re-bound access token, {@code null} if the session could not be re-bound
+     */
+    @Nullable
+    private String rebind(@NotNull UUID profileId, @NotNull String accessToken) {
+        // The client token is required to refresh the session.
+        String clientToken = this.clientToken;
+        if (clientToken == null || clientToken.isBlank()) return null;
 
-        // Rethrow, trying to remove sensitive data.
-        String message = "Unable to join the server via '" + this.server + "': " + code + ", body: " + response.body();
-        message = message.replace(accessToken, "[ACCESS]");
-        message = message.replace(this.accessToken, "[ACCESS]");
-        throw new AuthenticationException(message);
+        // Re-bind. (the join error is reported as-is if this fails)
+        try {
+            YggdrasilAuthResult result = YggdrasilAuth.refresh(this.server, accessToken, clientToken, profileId)
+                    .get(IAS.TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            LOGGER.info("IAS: Re-bound the session of '{}' to '{}'.", this.server, profileId);
+            return result.accessToken();
+        } catch (Throwable t) {
+            LOGGER.warn("IAS: Unable to re-bind the session of '{}' to '{}'.", this.server, profileId, t);
+            return null;
+        }
+    }
+
+    /**
+     * Removes the secret from the message, if it is present.
+     *
+     * @param message Target message
+     * @param secret  Secret to remove, {@code null} to skip
+     * @return Scrubbed message
+     */
+    @Contract(pure = true)
+    @NotNull
+    private static String scrub(@NotNull String message, @Nullable String secret) {
+        if (secret == null || secret.isBlank()) return message;
+        return message.replace(secret, "[SECRET]");
     }
 
     @Override

@@ -453,7 +453,7 @@ public final class YggdrasilAccount implements Account {
                 handler.stage(FINALIZING);
 
                 // Create and return the data.
-                LoginData login = new LoginData(this.name, this.uuid, session.accessToken(), true, this.server);
+                LoginData login = new LoginData(this.name, this.uuid, session.accessToken(), true, this.server, session.clientToken());
                 handler.success(login, saveStorage);
 
                 // Run onComplete.

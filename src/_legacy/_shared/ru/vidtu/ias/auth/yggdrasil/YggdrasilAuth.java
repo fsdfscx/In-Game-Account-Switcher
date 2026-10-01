@@ -343,11 +343,33 @@ public final class YggdrasilAuth {
     @CheckReturnValue
     @NotNull
     public static CompletableFuture<YggdrasilAuthResult> refresh(@NotNull YggdrasilServer server, @NotNull String accessToken, @NotNull String clientToken) {
+        return refresh(server, accessToken, clientToken, null);
+    }
+
+    /**
+     * Refreshes the access token, optionally re-binding the session to the specified character.
+     * <p>
+     * Some servers bind an access token to a specific character on authenticate/refresh and then
+     * refuse to join with a token that is not bound to the character being joined. Re-binding
+     * through this method makes such tokens usable without the account password.
+     *
+     * @param server      Target server
+     * @param accessToken Access token to refresh
+     * @param clientToken Client token to refresh
+     * @param profileId   Character UUID to re-bind the session to, {@code null} to keep the current one
+     * @return Future that will complete with the refreshed session or exceptionally
+     */
+    @CheckReturnValue
+    @NotNull
+    public static CompletableFuture<YggdrasilAuthResult> refresh(@NotNull YggdrasilServer server, @NotNull String accessToken, @NotNull String clientToken, @Nullable UUID profileId) {
         // Create the payload.
         JsonObject request = new JsonObject();
         request.addProperty("accessToken", accessToken);
         request.addProperty("clientToken", clientToken);
         request.addProperty("requestUser", true);
+        if (profileId != null) {
+            request.addProperty("selectedProfile", profileId.toString().replace("-", ""));
+        }
         String payload = GSONUtils.GSON.toJson(request);
 
         // Send the request.
@@ -470,7 +492,7 @@ public final class YggdrasilAuth {
      */
     @Contract(pure = true)
     @Nullable
-    private static String errorMessage(@NotNull String body) {
+    static String errorMessage(@NotNull String body) {
         try {
             JsonObject json = GSONUtils.GSON.fromJson(body, JsonObject.class);
             if (json == null) return null;
