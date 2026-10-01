@@ -21,6 +21,7 @@ package ru.vidtu.ias.auth.handlers;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import ru.vidtu.ias.account.Account;
 import ru.vidtu.ias.account.MicrosoftAccount;
 
 /**
@@ -51,6 +52,25 @@ public interface CreateHandler {
      * @param account Created account
      */
     void success(@NotNull MicrosoftAccount account);
+
+    /**
+     * Called when an authentication of any account type has performed successfully.
+     * <p>
+     * This exists as a separate method (instead of overloading {@link #success(MicrosoftAccount)})
+     * to keep the older, Microsoft-only implementations source-compatible without changes.
+     *
+     * @param account Created account
+     */
+    default void successAccount(@NotNull Account account) {
+        // Delegate to the Microsoft-only implementation for backward compatibility.
+        if (account instanceof MicrosoftAccount microsoft) {
+            this.success(microsoft);
+            return;
+        }
+
+        // Unknown.
+        throw new UnsupportedOperationException("Unable to handle created account: " + account);
+    }
 
     /**
      * Called when an authentication has failed.

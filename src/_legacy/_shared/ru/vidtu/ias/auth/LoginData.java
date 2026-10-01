@@ -21,6 +21,7 @@ package ru.vidtu.ias.auth;
 
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import ru.vidtu.ias.account.Account;
 
 import java.util.UUID;
@@ -32,9 +33,23 @@ import java.util.UUID;
  * @param uuid   Player UUID
  * @param token  Session access token
  * @param online Whether the account type is online
+ * @param server API root of the external (Yggdrasil) authentication server, {@code null} for official/offline accounts
  * @author VidTu
  */
-public record LoginData(@NotNull String name, @NotNull UUID uuid, @NotNull String token, boolean online) {
+public record LoginData(@NotNull String name, @NotNull UUID uuid, @NotNull String token, boolean online, @Nullable String server) {
+    /**
+     * Creates new login data for an official/offline account. (no external server)
+     *
+     * @param name   Player name
+     * @param uuid   Player UUID
+     * @param token  Session access token
+     * @param online Whether the account type is online
+     */
+    @Contract(pure = true)
+    public LoginData(@NotNull String name, @NotNull UUID uuid, @NotNull String token, boolean online) {
+        this(name, uuid, token, online, null);
+    }
+
     @Contract(pure = true)
     @Override
     @NotNull
@@ -44,6 +59,7 @@ public record LoginData(@NotNull String name, @NotNull UUID uuid, @NotNull Strin
                 ", uuid=" + this.uuid +
                 ", token=[TOKEN]" +
                 ", online=" + this.online +
+                ", server='" + this.server + '\'' +
                 '}';
     }
 }
