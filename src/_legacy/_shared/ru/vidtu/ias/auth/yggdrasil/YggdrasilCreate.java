@@ -38,6 +38,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Creation flow for external (Yggdrasil) accounts.
@@ -54,6 +55,15 @@ public final class YggdrasilCreate {
      */
     @NotNull
     public static final String LOCATING = "ias.login.yggdrasil.locate";
+
+    /**
+     * Delay between two per-character authentication requests.
+     * <p>
+     * Each character is bound with its own {@code authserver/authenticate} request, and some
+     * servers (e.g. Blessing Skin installations) rate-limit that endpoint to one request per
+     * second, replying with a 403 "too many requests" error otherwise.
+     */
+    private static final long THROTTLE_MILLIS = 1200L;
 
     /**
      * Logger for this class.
@@ -151,15 +161,32 @@ public final class YggdrasilCreate {
             throw new FriendlyException("The account has no characters.", "ias.error.yggdrasil.profile");
         }
 
-        // Authenticate each character, one by one. (to be gentle with the server rate limits)
+        // Authenticate each character, one by one. The requests are throttled, because some
+        // servers rate-limit the authenticate endpoint to one request per second.
         CompletableFuture<List<Account>> chain = CompletableFuture.completedFuture(new ArrayList<>(profiles.size()));
         for (MCProfile profile : profiles) {
-            chain = chain.thenComposeAsync(accounts -> authenticate(server, username, password, savePassword, crypt, profile).thenApplyAsync(account -> {
+            chain = chain.thenComposeAsync(accounts -> delay().thenComposeAsync(
+                    ignored -> authenticate(server, username, password, savePassword, crypt, profile),
+                    IAS.executor()
+            ).thenApplyAsync(account -> {
                 accounts.add(account);
                 return accounts;
             }, IAS.executor()), IAS.executor());
         }
         return chain;
+    }
+
+    /**
+     * Completes after the per-character authentication throttle interval.
+     *
+     * @return Future that will complete after the throttle
+     */
+    @CheckReturnValue
+    @NotNull
+    private static CompletableFuture<Void> delay() {
+        return CompletableFuture.runAsync(() -> {
+            // NO-OP
+        }, CompletableFuture.delayedExecutor(THROTTLE_MILLIS, TimeUnit.MILLISECONDS, IAS.executor()));
     }
 
     /**
