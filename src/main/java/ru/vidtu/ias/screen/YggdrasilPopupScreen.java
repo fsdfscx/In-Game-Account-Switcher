@@ -48,6 +48,10 @@ import java.util.function.Supplier;
 
 /**
  * External (Yggdrasil) add popup screen.
+ * <p>
+ * The screen has two steps, mirroring {@code MicrosoftPopupScreen}:
+ * first the Crypt is resolved (if it's password-based), then the server URL,
+ * email/username and password are requested.
  *
  * @author VidTu
  */
@@ -73,7 +77,7 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
     private final Consumer<Account> handler;
 
     /**
-     * Crypt method, {@code null} to use a password.
+     * Crypt method, {@code null} until the password-based Crypt is set up.
      */
     private Crypt crypt;
 
@@ -93,9 +97,14 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
     private PopupBox password;
 
     /**
-     * Crypt password box. (only when using a password-based crypt)
+     * Crypt password box. (only while resolving the Crypt)
      */
     private PopupBox cryptPassword;
+
+    /**
+     * Crypt password tip.
+     */
+    private MultiLineLabel cryptPasswordTip;
 
     /**
      * Done button.
@@ -132,7 +141,7 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
      *
      * @param parent  Parent screen
      * @param handler Account handler
-     * @param crypt   Crypt method, {@code null} to use a password
+     * @param crypt   Crypt method, {@code null} to ask for a Crypt password first
      */
     YggdrasilPopupScreen(Screen parent, Consumer<Account> handler, Crypt crypt) {
         super(Component.translatable("ias.yggdrasil"));
@@ -170,36 +179,59 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
         int cx = this.width / 2;
         int cy = this.height / 2;
 
+        // Ask for the Crypt password first, if not resolved yet.
+        if (this.crypt == null) {
+            this.server = null;
+            this.username = null;
+            this.password = null;
+            this.done = null;
+
+            // Add crypt password box.
+            this.cryptPassword = new PopupBox(this.font, cx - 100, cy - 10 + 5, 178, 20, this.cryptPassword, Component.translatable("ias.password"), this::enterCryptPassword, true);
+            this.cryptPassword.setHint(Component.translatable("ias.password.hint").withStyle(ChatFormatting.DARK_GRAY));
+            this.cryptPassword.addFormatter((s, i) -> IASConfig.passwordEchoing ? FormattedCharSequence.forward("*".repeat(s.length()), Style.EMPTY) : FormattedCharSequence.EMPTY);
+            this.cryptPassword.setMaxLength(32);
+            this.addRenderableWidget(this.cryptPassword);
+
+            // Add enter password button.
+            Button enter = new PopupButton(cx - 100 + 180, cy - 10 + 5, 20, 20, Component.literal(">>"), btn -> this.enterCryptPassword(), Supplier::get);
+            enter.active = !this.cryptPassword.getValue().isBlank();
+            this.cryptPassword.setResponder(value -> enter.active = !value.isBlank());
+            this.addRenderableWidget(enter);
+
+            // Create tip.
+            this.cryptPasswordTip = MultiLineLabel.create(this.font, Component.translatable("ias.password.tip"), 320);
+
+            // Add cancel button.
+            this.addRenderableWidget(new PopupButton(cx - 75, cy + 49 - 22, 150, 20, CommonComponents.GUI_CANCEL, btn -> this.onClose(), Supplier::get));
+            return;
+        }
+
+        // Resolved, render the form.
+        this.cryptPassword = null;
+        this.cryptPasswordTip = null;
+
         // Add server box.
-        this.server = new PopupBox(this.font, cx - 125, cy - 66, 250, 20, this.server, Component.translatable("ias.yggdrasil.server"), this::submit, false);
+        this.server = new PopupBox(this.font, cx - 125, cy - 54, 250, 20, this.server, Component.translatable("ias.yggdrasil.server"), this::submit, false);
         this.server.setHint(Component.translatable("ias.yggdrasil.server.hint").withStyle(ChatFormatting.DARK_GRAY));
         this.addRenderableWidget(this.server);
 
         // Add username box.
-        this.username = new PopupBox(this.font, cx - 125, cy - 42, 250, 20, this.username, Component.translatable("ias.yggdrasil.username"), this::submit, false);
+        this.username = new PopupBox(this.font, cx - 125, cy - 14, 250, 20, this.username, Component.translatable("ias.yggdrasil.username"), this::submit, false);
         this.addRenderableWidget(this.username);
 
         // Add password box.
-        this.password = new PopupBox(this.font, cx - 125, cy - 18, 250, 20, this.password, Component.translatable("ias.yggdrasil.password"), this::submit, true);
+        this.password = new PopupBox(this.font, cx - 125, cy + 26, 250, 20, this.password, Component.translatable("ias.yggdrasil.password"), this::submit, true);
         this.password.addFormatter((s, i) -> IASConfig.passwordEchoing ? FormattedCharSequence.forward("*".repeat(s.length()), Style.EMPTY) : FormattedCharSequence.EMPTY);
         this.addRenderableWidget(this.password);
 
-        // Add crypt password box, if required.
-        if (this.crypt == null) {
-            this.cryptPassword = new PopupBox(this.font, cx - 125, cy + 6, 250, 20, this.cryptPassword, Component.translatable("ias.password"), this::submit, true);
-            this.cryptPassword.addFormatter((s, i) -> IASConfig.passwordEchoing ? FormattedCharSequence.forward("*".repeat(s.length()), Style.EMPTY) : FormattedCharSequence.EMPTY);
-            this.addRenderableWidget(this.cryptPassword);
-        } else {
-            this.cryptPassword = null;
-        }
-
         // Add done button.
-        this.done = new PopupButton(cx - 125, cy + 52, 122, 20, CommonComponents.GUI_DONE, btn -> this.submit(), Supplier::get);
+        this.done = new PopupButton(cx - 125, cy + 102, 122, 20, CommonComponents.GUI_DONE, btn -> this.submit(), Supplier::get);
         this.done.color(0.5F, 1.0F, 0.5F, true);
         this.addRenderableWidget(this.done);
 
         // Add cancel button.
-        PopupButton cancel = new PopupButton(cx + 3, cy + 52, 122, 20, CommonComponents.GUI_CANCEL, btn -> this.onClose(), Supplier::get);
+        PopupButton cancel = new PopupButton(cx + 3, cy + 102, 122, 20, CommonComponents.GUI_CANCEL, btn -> this.onClose(), Supplier::get);
         cancel.color(1.0F, 1.0F, 1.0F, true);
         this.addRenderableWidget(cancel);
 
@@ -207,10 +239,30 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
         this.server.setResponder(value -> this.type(false));
         this.username.setResponder(value -> this.type(false));
         this.password.setResponder(value -> this.type(false));
-        if (this.cryptPassword != null) {
-            this.cryptPassword.setResponder(value -> this.type(false));
-        }
         this.type(true);
+    }
+
+    /**
+     * Resolves the password-based Crypt and re-opens the form.
+     */
+    private void enterCryptPassword() {
+        // Bruh.
+        assert this.minecraft != null;
+
+        // Prevent NPE.
+        if (this.crypt != null || this.cryptPassword == null) return;
+
+        // Don't allow blank.
+        String value = this.cryptPassword.getValue();
+        if (value.isBlank()) return;
+
+        // Set the crypt.
+        this.crypt = new PasswordCrypt(value);
+        this.cryptPassword = null;
+        this.cryptPasswordTip = null;
+
+        // Rebuild the UI.
+        this.init(this.width, this.height);
     }
 
     /**
@@ -231,11 +283,6 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
 
         // Require every box to be filled.
         boolean filled = !this.server.getValue().isBlank() && !this.username.getValue().isBlank() && !this.password.getValue().isBlank();
-        if (this.cryptPassword != null && this.cryptPassword.getValue().isBlank()) {
-            filled = false;
-        }
-
-        // Apply.
         this.done.active = filled;
         this.done.color(filled ? 0.5F : 1.0F, filled ? 1.0F : 0.5F, filled ? 0.5F : 0.5F, instant);
     }
@@ -248,7 +295,7 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
         assert this.minecraft != null;
 
         // Prevent NPE and double submission.
-        if (this.locked || this.server == null || this.username == null || this.password == null) return;
+        if (this.locked || this.crypt == null || this.server == null || this.username == null || this.password == null) return;
 
         // Validate.
         String url = this.server.getValue().strip();
@@ -256,24 +303,12 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
         String pass = this.password.getValue();
         if (url.isBlank() || user.isBlank() || pass.isBlank()) return;
 
-        // Resolve the crypt.
-        Crypt crypt = this.crypt;
-        if (crypt == null) {
-            // Prevent NPE.
-            if (this.cryptPassword == null) return;
-
-            // Require the crypt password.
-            String cryptPassword = this.cryptPassword.getValue();
-            if (cryptPassword.isBlank()) return;
-            crypt = new PasswordCrypt(cryptPassword);
-        }
-
         // Lock the UI.
         this.locked = true;
         this.type(false);
 
         // Start the creation.
-        YggdrasilCreate.create(url, user, pass, crypt, this);
+        YggdrasilCreate.create(url, user, pass, this.crypt, this);
     }
 
     @Override
@@ -296,19 +331,31 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
         super.extractRenderState(graphics, mouseX, mouseY, delta);
 
         // Render the title.
+        boolean cryptStep = this.crypt == null && this.cryptPassword != null;
         pose.pushMatrix();
         pose.scale(2.0F, 2.0F);
-        graphics.centeredText(this.font, this.title, this.width / 4, this.height / 4 - 75 / 2, 0xFF_FF_FF_FF);
+        graphics.centeredText(this.font, this.title, this.width / 4, this.height / 4 - (cryptStep ? 49 : 90) / 2, 0xFF_FF_FF_FF);
         pose.popMatrix();
+
+        // Render the Crypt password step.
+        if (cryptStep) {
+            graphics.centeredText(this.font, this.cryptPassword.getMessage(), this.width / 2, this.height / 2 - 10 - 5, 0xFF_FF_FF_FF);
+            if (this.cryptPasswordTip != null) {
+                pose.pushMatrix();
+                pose.scale(0.5F, 0.5F);
+                IStonecutter.renderMultilineLabelCentered(this.cryptPasswordTip, graphics, this.width, this.height + 40);
+                pose.popMatrix();
+            }
+            return;
+        }
 
         // Render box titles.
         int cx = this.width / 2;
-        if (this.server != null) graphics.centeredText(this.font, this.server.getMessage(), cx, this.height / 2 - 76, 0xFF_FF_FF_FF);
-        if (this.username != null) graphics.centeredText(this.font, this.username.getMessage(), cx, this.height / 2 - 52, 0xFF_FF_FF_FF);
-        if (this.password != null) graphics.centeredText(this.font, this.password.getMessage(), cx, this.height / 2 - 28, 0xFF_FF_FF_FF);
-        if (this.cryptPassword != null) graphics.centeredText(this.font, this.cryptPassword.getMessage(), cx, this.height / 2 - 4, 0xFF_FF_FF_FF);
+        if (this.server != null) graphics.centeredText(this.font, this.server.getMessage(), cx, this.height / 2 - 64, 0xFF_FF_FF_FF);
+        if (this.username != null) graphics.centeredText(this.font, this.username.getMessage(), cx, this.height / 2 - 24, 0xFF_FF_FF_FF);
+        if (this.password != null) graphics.centeredText(this.font, this.password.getMessage(), cx, this.height / 2 + 16, 0xFF_FF_FF_FF);
 
-        // Synchronize to prevent funny things.
+        // Render the stage label.
         synchronized (this.lock) {
             // Label is unbaked.
             if (this.label == null) {
@@ -316,14 +363,14 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
                 Component component = Objects.requireNonNullElse(this.stage, Component.empty());
 
                 // Bake the label.
-                this.label = MultiLineLabel.create(this.font, component, 240);
+                this.label = MultiLineLabel.create(this.font, component, 250);
 
                 // Narrate.
                 this.minecraft.getNarrator().saySystemQueued(component);
             }
 
             // Render the label.
-            IStonecutter.renderMultilineLabelCentered(this.label, graphics, this.width / 2, this.height / 2 + 32);
+            IStonecutter.renderMultilineLabelCentered(this.label, graphics, this.width / 2, this.height / 2 + 52);
         }
 
         // Render the error note, if errored.
@@ -349,7 +396,7 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
             // Render BG.
             int w = this.errorNote.getWidth() / 4 + 2;
             int h = (this.errorNote.getLineCount() * 9) / 2 + 1;
-            int sy = this.height / 2 + 87;
+            int sy = this.height / 2 + 138;
             graphics.fill(cx - w, sy, cx + w, sy + h, 0x101010 | opacityMask);
             graphics.fill(cx - w + 1, sy - 1, cx + w - 1, sy, 0x101010 | opacityMask);
             graphics.fill(cx - w + 1, sy + h, cx + w - 1, sy + h + 1, 0x101010 | opacityMask);
@@ -359,7 +406,7 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
             pose.scale(0.5F, 0.5F);
             var renderer = graphics.textRenderer();
             renderer.defaultParameters(renderer.defaultParameters().withOpacity(opacityFloat));
-            this.errorNote.visitLines(net.minecraft.client.gui.TextAlignment.CENTER, this.width, this.height + 174, 9, renderer);
+            this.errorNote.visitLines(net.minecraft.client.gui.TextAlignment.CENTER, this.width, this.height + 276, 9, renderer);
             pose.popMatrix();
         }
     }
@@ -382,9 +429,11 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
         // Render "form".
         int centerX = this.width / 2;
         int centerY = this.height / 2;
-        graphics.fill(centerX - 135, centerY - 85, centerX + 135, centerY + 80, 0xF8_20_20_30);
-        graphics.fill(centerX - 134, centerY - 86, centerX + 134, centerY - 85, 0xF8_20_20_30);
-        graphics.fill(centerX - 134, centerY + 80, centerX + 134, centerY + 81, 0xF8_20_20_30);
+        int panelTop = this.crypt == null ? 50 : 95;
+        int panelBottom = this.crypt == null ? 50 : 127;
+        graphics.fill(centerX - 135, centerY - panelTop, centerX + 135, centerY + panelBottom, 0xF8_20_20_30);
+        graphics.fill(centerX - 134, centerY - panelTop - 1, centerX + 134, centerY - panelTop, 0xF8_20_20_30);
+        graphics.fill(centerX - 134, centerY + panelBottom, centerX + 134, centerY + panelBottom + 1, 0xF8_20_20_30);
     }
 
     @Override
