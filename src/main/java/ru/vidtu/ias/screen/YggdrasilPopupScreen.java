@@ -232,14 +232,17 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
         // Add server box.
         this.server = new PopupBox(this.font, cx - 125, cy - 54, 250, 20, this.server, Component.translatable("ias.yggdrasil.server"), this::submit, false);
         this.server.setHint(Component.translatable("ias.yggdrasil.server.hint").withStyle(ChatFormatting.DARK_GRAY));
+        this.server.setMaxLength(256);
         this.addRenderableWidget(this.server);
 
         // Add username box.
         this.username = new PopupBox(this.font, cx - 125, cy - 14, 250, 20, this.username, Component.translatable("ias.yggdrasil.username"), this::submit, false);
+        this.username.setMaxLength(256);
         this.addRenderableWidget(this.username);
 
         // Add password box.
         this.password = new PopupBox(this.font, cx - 125, cy + 26, 250, 20, this.password, Component.translatable("ias.yggdrasil.password"), this::submit, true);
+        this.password.setMaxLength(256);
         this.password.addFormatter((s, i) -> IASConfig.passwordEchoing ? FormattedCharSequence.forward("*".repeat(s.length()), Style.EMPTY) : FormattedCharSequence.EMPTY);
         this.addRenderableWidget(this.password);
 
