@@ -36,6 +36,7 @@ import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import ru.vidtu.ias.account.Account;
 import ru.vidtu.ias.platform.IStonecutter;
 import ru.vidtu.ias.config.IASConfig;
@@ -92,9 +93,16 @@ final class AccountEntry extends ObjectSelectionList.Entry<AccountEntry> {
     private final AccountList list;
 
     /**
-     * IAS account.
+     * IAS account, {@code null} if this entry is a group header.
      */
+    @Nullable
     private final Account account;
+
+    /**
+     * Group header title, {@code null} if this entry is an account.
+     */
+    @Nullable
+    private final Component header;
 
     /**
      * Account tooltip.
@@ -122,11 +130,49 @@ final class AccountEntry extends ObjectSelectionList.Entry<AccountEntry> {
         this.minecraft = minecraft;
         this.list = list;
         this.account = account;
+        this.header = null;
         this.tooltip = Stream.of(
-                CommonComponents.optionNameValue(Component.translatable("ias.accounts.tip.nick"), Component.literal(this.account.name())),
-                CommonComponents.optionNameValue(Component.translatable("ias.accounts.tip.uuid"), Component.literal(this.account.uuid().toString())),
-                CommonComponents.optionNameValue(Component.translatable("ias.accounts.tip.type"), Component.translatable(this.account.typeTipKey()))
+                CommonComponents.optionNameValue(Component.translatable("ias.accounts.tip.nick"), Component.literal(account.name())),
+                CommonComponents.optionNameValue(Component.translatable("ias.accounts.tip.uuid"), Component.literal(account.uuid().toString())),
+                CommonComponents.optionNameValue(Component.translatable("ias.accounts.tip.type"), Component.translatable(account.typeTipKey()))
         ).map(Component::getVisualOrderText).toList();
+    }
+
+    /**
+     * Creates a new group header entry.
+     *
+     * @param minecraft Minecraft instance
+     * @param list      Parent list
+     * @param title     Header title
+     * @return Created header entry
+     */
+    @NotNull
+    static AccountEntry header(Minecraft minecraft, AccountList list, Component title) {
+        return new AccountEntry(minecraft, list, title);
+    }
+
+    /**
+     * Creates a new group header entry.
+     *
+     * @param minecraft Minecraft instance
+     * @param list      Parent list
+     * @param header    Header title
+     */
+    private AccountEntry(Minecraft minecraft, AccountList list, Component header) {
+        this.minecraft = minecraft;
+        this.list = list;
+        this.account = null;
+        this.header = header;
+        this.tooltip = List.of();
+    }
+
+    /**
+     * Gets whether this entry is a group header.
+     *
+     * @return Whether this entry is a group header
+     */
+    boolean header() {
+        return this.account == null;
     }
 
     @Override
@@ -137,6 +183,24 @@ final class AccountEntry extends ObjectSelectionList.Entry<AccountEntry> {
     *///?} else {
     /*public void render(GuiGraphics graphics, int index, int y, int x, int width, int height, int mouseX, int mouseY, boolean hovered, float delta) {*/
     //?}
+        // Content bounds.
+        //? if >=1.21.10 {
+        int x = this.getContentX();
+        int y = this.getContentY();
+        int width = this.getContentWidth();
+        int height = this.getContentHeight();
+        //?}
+
+        // Render the group header.
+        if (this.account == null) {
+            Component title = Objects.requireNonNullElse(this.header, Component.empty());
+            //? if >=26.1 {
+            graphics.text(this.minecraft.font, title, x + 2, y + 1, 0xFF_FF_D0_60);
+            //?} else
+            /*graphics.drawString(this.minecraft.font, title, x + 2, y + 1, 0xFF_FF_D0_60);*/
+            return;
+        }
+
         // Render tooltip.
         if (hovered) {
             if ((System.nanoTime() - this.lastFree) >= 500_000_000L) {
@@ -148,12 +212,6 @@ final class AccountEntry extends ObjectSelectionList.Entry<AccountEntry> {
 
         // Render the skin.
         PlayerSkin skin = this.list.skin(this);
-        //? if >=1.21.10 {
-        int x = this.getContentX();
-        int y = this.getContentY();
-        int width = this.getContentWidth();
-        int height = this.getContentHeight();
-        //?}
         //? if >=26.1 {
         PlayerFaceExtractor.extractRenderState(graphics, skin, x, y, 8);
         //?} else
@@ -179,6 +237,14 @@ final class AccountEntry extends ObjectSelectionList.Entry<AccountEntry> {
         graphics.text(this.minecraft.font, this.account.name(), x + 10, y, color);
         //?} else
         /*graphics.drawString(this.minecraft.font, this.account.name(), x + 10, y, color);*/
+
+        // Render the account type on the right.
+        Component subtitle = Component.translatable(this.account.typeTipKey());
+        int subtitleX = x + width - 34 - this.minecraft.font.width(subtitle);
+        //? if >=26.1 {
+        graphics.text(this.minecraft.font, subtitle, subtitleX, y, 0xFF_90_90_90);
+        //?} else
+        /*graphics.drawString(this.minecraft.font, subtitle, subtitleX, y, 0xFF_90_90_90);*/
 
         // Render warning if insecure.
         if (this.account.insecure()) {
@@ -229,6 +295,11 @@ final class AccountEntry extends ObjectSelectionList.Entry<AccountEntry> {
         double mouseX = event.x();
     //?} else
     /*public boolean mouseClicked(double mouseX, double mouseY, int button) {*/
+        // Group headers have no actions beyond the selection.
+        if (this.account == null) {
+            return true;
+        }
+
         // Swap if selected.
         if (this.equals(this.list.getFocused()) || this.equals(this.list.getSelected())) {
             int right = this.list.getRowRight();
@@ -267,14 +338,16 @@ final class AccountEntry extends ObjectSelectionList.Entry<AccountEntry> {
     @Override
     @NotNull
     public Component getNarration() {
-        return Component.literal(this.account.name());
+        if (this.account != null) return Component.literal(this.account.name());
+        return Objects.requireNonNullElse(this.header, Component.empty());
     }
 
     /**
      * Gets the account.
      *
-     * @return IAS account
+     * @return IAS account, {@code null} if this entry is a group header
      */
+    @Nullable
     Account account() {
         return this.account;
     }
@@ -283,12 +356,13 @@ final class AccountEntry extends ObjectSelectionList.Entry<AccountEntry> {
     public boolean equals(Object obj) {
         if (this == obj) return true;
         if (!(obj instanceof AccountEntry that)) return false;
-        return Objects.equals(this.account, that.account);
+        if (this.account != null) return Objects.equals(this.account, that.account);
+        return Objects.equals(this.header, that.header);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hashCode(this.account);
+        return this.account != null ? Objects.hashCode(this.account) : Objects.hashCode(this.header);
     }
 
     @Override

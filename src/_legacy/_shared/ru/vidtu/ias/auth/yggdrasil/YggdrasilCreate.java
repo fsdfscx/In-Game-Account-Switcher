@@ -140,7 +140,7 @@ public final class YggdrasilCreate {
                 // Create the account.
                 LOGGER.info("IAS: Successfully added {}", session);
                 handler.stage(YggdrasilAccount.FINALIZING);
-                YggdrasilAccount account = new YggdrasilAccount(crypt.insecure(), server.apiRoot(), session.uuid(), session.name(), data);
+                YggdrasilAccount account = new YggdrasilAccount(crypt.insecure(), server.apiRoot(), server.name(), session.uuid(), session.name(), data);
                 handler.successAccount(account);
             }, IAS.executor());
         }, IAS.executor()).exceptionallyAsync(t -> {

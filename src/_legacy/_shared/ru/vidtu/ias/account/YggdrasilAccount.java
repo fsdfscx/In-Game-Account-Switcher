@@ -46,6 +46,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.NoRouteToHostException;
+import java.net.URI;
 import java.net.UnknownHostException;
 import java.net.http.HttpTimeoutException;
 import java.nio.channels.UnresolvedAddressException;
@@ -120,6 +121,12 @@ public final class YggdrasilAccount implements Account {
     private final String server;
 
     /**
+     * Human-readable name of the authentication server (e.g. "LittleSkin"), may be empty.
+     */
+    @NotNull
+    private final String serverName;
+
+    /**
      * Account UUID.
      */
     @NotNull
@@ -139,16 +146,18 @@ public final class YggdrasilAccount implements Account {
     /**
      * Creates a new external account.
      *
-     * @param insecure Whether the account is insecurely stored
-     * @param server   API root of the authentication server
-     * @param uuid     Account UUID
-     * @param name     Account name
-     * @param data     Encrypted account data
+     * @param insecure   Whether the account is insecurely stored
+     * @param server     API root of the authentication server
+     * @param serverName Display name of the authentication server, empty if unknown
+     * @param uuid       Account UUID
+     * @param name       Account name
+     * @param data       Encrypted account data
      */
     @Contract(pure = true)
-    public YggdrasilAccount(boolean insecure, @NotNull String server, @NotNull UUID uuid, @NotNull String name, byte @NotNull [] data) {
+    public YggdrasilAccount(boolean insecure, @NotNull String server, @NotNull String serverName, @NotNull UUID uuid, @NotNull String name, byte @NotNull [] data) {
         this.insecure = insecure;
         this.server = server;
+        this.serverName = serverName;
         this.uuid = uuid;
         this.name = name;
         this.data = data.clone();
@@ -158,7 +167,7 @@ public final class YggdrasilAccount implements Account {
     @Override
     @NotNull
     public String type() {
-        return "ias:yggdrasil_v1";
+        return "ias:yggdrasil_v2";
     }
 
     @Contract(pure = true)
@@ -190,6 +199,40 @@ public final class YggdrasilAccount implements Account {
     @Contract(pure = true)
     @NotNull
     public String server() {
+        return this.server;
+    }
+
+    /**
+     * Gets the display name of the authentication server.
+     *
+     * @return Authentication server display name, empty if unknown
+     */
+    @Contract(pure = true)
+    @NotNull
+    public String serverName() {
+        return this.serverName;
+    }
+
+    /**
+     * Gets the name to show for the authentication server, falling back to its host.
+     *
+     * @return Authentication server source name
+     */
+    @Contract(pure = true)
+    @NotNull
+    public String sourceName() {
+        // Use the located name, if any.
+        if (!this.serverName.isBlank()) return this.serverName;
+
+        // Fall back to the URL host.
+        try {
+            String host = URI.create(this.server).getHost();
+            if (host != null && !host.isBlank()) return host;
+        } catch (Throwable ignored) {
+            // NO-OP
+        }
+
+        // Fall back to the URL itself.
         return this.server;
     }
 
@@ -289,7 +332,7 @@ public final class YggdrasilAccount implements Account {
                 }
 
                 // Validate the stored session.
-                final YggdrasilServer server = new YggdrasilServer(this.server, this.name, false);
+                final YggdrasilServer server = new YggdrasilServer(this.server, this.serverName, false);
                 LOGGER.info("IAS: Validating session...");
                 handler.stage(VALIDATING);
                 return YggdrasilAuth.validate(server, access, client.get()).thenComposeAsync(valid -> {
@@ -469,6 +512,9 @@ public final class YggdrasilAccount implements Account {
         // Write the server.
         out.writeUTF(this.server);
 
+        // Write the server name.
+        out.writeUTF(this.serverName);
+
         // Write the UUID.
         out.writeLong(this.uuid.getMostSignificantBits());
         out.writeLong(this.uuid.getLeastSignificantBits());
@@ -482,7 +528,7 @@ public final class YggdrasilAccount implements Account {
     }
 
     /**
-     * Reads the account from the input.
+     * Reads the account (version 1, without the server name) from the input.
      *
      * @param in Target input
      * @return Read account
@@ -490,7 +536,7 @@ public final class YggdrasilAccount implements Account {
      */
     @CheckReturnValue
     @NotNull
-    public static YggdrasilAccount read(@NotNull DataInput in) throws IOException {
+    public static YggdrasilAccount readV1(@NotNull DataInput in) throws IOException {
         // Read the insecure.
         boolean insecure = in.readBoolean();
 
@@ -508,7 +554,41 @@ public final class YggdrasilAccount implements Account {
         byte[] data = new byte[length];
         in.readFully(data);
 
+        // Create and return. (the server name is unknown, it'll fall back to the host)
+        return new YggdrasilAccount(insecure, server, "", uuid, name, data);
+    }
+
+    /**
+     * Reads the account (version 2) from the input.
+     *
+     * @param in Target input
+     * @return Read account
+     * @throws IOException On I/O error
+     */
+    @CheckReturnValue
+    @NotNull
+    public static YggdrasilAccount readV2(@NotNull DataInput in) throws IOException {
+        // Read the insecure.
+        boolean insecure = in.readBoolean();
+
+        // Read the server.
+        String server = in.readUTF();
+
+        // Read the server name.
+        String serverName = in.readUTF();
+
+        // Read the UUID.
+        UUID uuid = new UUID(in.readLong(), in.readLong());
+
+        // Read the name.
+        String name = in.readUTF();
+
+        // Read the data.
+        int length = in.readUnsignedShort();
+        byte[] data = new byte[length];
+        in.readFully(data);
+
         // Create and return.
-        return new YggdrasilAccount(insecure, server, uuid, name, data);
+        return new YggdrasilAccount(insecure, server, serverName, uuid, name, data);
     }
 }

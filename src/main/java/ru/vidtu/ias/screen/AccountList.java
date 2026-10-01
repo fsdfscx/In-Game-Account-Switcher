@@ -28,20 +28,29 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.components.ObjectSelectionList;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.resources.DefaultPlayerSkin;
+import net.minecraft.network.chat.Component;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.vidtu.ias.IAS;
 import ru.vidtu.ias.account.Account;
+import ru.vidtu.ias.account.MicrosoftAccount;
 import ru.vidtu.ias.account.OfflineAccount;
+import ru.vidtu.ias.account.YggdrasilAccount;
 import ru.vidtu.ias.auth.LoginData;
 //? if >=26.2 {
 import ru.vidtu.ias.auth.AccountProfiles;
 //?}
 import ru.vidtu.ias.config.IASStorage;
+import ru.vidtu.ias.platform.IStonecutter;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.WeakHashMap;
 import java.util.concurrent.CompletableFuture;
@@ -108,39 +117,96 @@ final class AccountList extends ObjectSelectionList<AccountEntry> {
      * @param query Search query
      */
     void update(String query) {
-        // Add all if blank.
-        if (query == null || query.isBlank()) {
-            // Add every account.
-            AccountEntry selected = this.getSelected();
-            this.replaceEntries(IASStorage.ACCOUNTS.stream()
-                    .map(account -> new AccountEntry(this.minecraft, this, account))
-                    .toList());
-            this.setSelected(this.children().contains(selected) ? selected : null);
-
-            // Notify the root.
-            this.screen.updateSelected();
-
-            // Don't process search.
-            return;
-        }
-
-        // Lowercase query.
-        String lowerQuery = query.toLowerCase(Locale.ROOT);
-
-        // Add every account.
+        // Keep the selection, if possible.
         AccountEntry selected = this.getSelected();
-        this.replaceEntries(IASStorage.ACCOUNTS.stream()
-                .filter(account -> account.name().toLowerCase(Locale.ROOT).contains(lowerQuery))
-                .sorted((f, s) -> Boolean.compare(
-                        s.name().toLowerCase(Locale.ROOT).startsWith(lowerQuery),
-                        f.name().toLowerCase(Locale.ROOT).startsWith(lowerQuery)
-                ))
-                .map(account -> new AccountEntry(this.minecraft, this, account))
-                .toList());
+
+        // Rebuild the grouped entries.
+        this.replaceEntries(this.entries(query));
         this.setSelected(this.children().contains(selected) ? selected : null);
 
         // Notify the root.
         this.screen.updateSelected();
+    }
+
+    /**
+     * Builds the grouped entries for the query.
+     * <p>
+     * The accounts are grouped by their source (Microsoft, offline, or a specific external
+     * authentication server), and each group is preceded by a header entry.
+     *
+     * @param query Search query
+     * @return Grouped entries
+     */
+    @NotNull
+    private List<AccountEntry> entries(@Nullable String query) {
+        // Collect the matching accounts, preserving the storage order.
+        List<Account> matching = new ArrayList<>(IASStorage.ACCOUNTS);
+        if (query != null && !query.isBlank()) {
+            String lowerQuery = query.toLowerCase(Locale.ROOT);
+            matching.removeIf(account -> !account.name().toLowerCase(Locale.ROOT).contains(lowerQuery));
+            matching.sort((f, s) -> Boolean.compare(
+                    s.name().toLowerCase(Locale.ROOT).startsWith(lowerQuery),
+                    f.name().toLowerCase(Locale.ROOT).startsWith(lowerQuery)
+            ));
+        }
+
+        // Group them by the source, preserving the first-appearance order. (LinkedHashMap)
+        Map<String, List<Account>> groups = new LinkedHashMap<>();
+        for (Account account : matching) {
+            groups.computeIfAbsent(sourceKey(account), key -> new ArrayList<>(4)).add(account);
+        }
+
+        // Flatten into the entry list, with a header per group.
+        List<AccountEntry> entries = new ArrayList<>(matching.size() + groups.size());
+        for (List<Account> group : groups.values()) {
+            entries.add(AccountEntry.header(this.minecraft, this, sourceTitle(group.get(0))));
+            for (Account account : group) {
+                entries.add(new AccountEntry(this.minecraft, this, account));
+            }
+        }
+        return entries;
+    }
+
+    /**
+     * Gets the grouping key (the source) of the account.
+     *
+     * @param account Target account
+     * @return Grouping key
+     */
+    @NotNull
+    private static String sourceKey(@NotNull Account account) {
+        if (account instanceof YggdrasilAccount yggdrasil) return "yggdrasil:" + yggdrasil.server();
+        if (account instanceof MicrosoftAccount) return "microsoft";
+        return "offline";
+    }
+
+    /**
+     * Gets the group title for the account.
+     *
+     * @param account Any account of the group
+     * @return Group title
+     */
+    @NotNull
+    private static Component sourceTitle(@NotNull Account account) {
+        // External accounts are grouped by their authentication server.
+        if (account instanceof YggdrasilAccount yggdrasil) {
+            return Component.translatable("ias.accounts.group", yggdrasil.sourceName(),
+                    Component.translatable("ias.accounts.tip.type.yggdrasil"));
+        }
+
+        // Microsoft and offline accounts are grouped by their type.
+        return Component.translatable(account.typeTipKey());
+    }
+
+    /**
+     * Gets the account of the selected entry.
+     *
+     * @return Selected account, {@code null} if nothing or a group header is selected
+     */
+    @Nullable
+    private Account selectedAccount() {
+        AccountEntry selected = this.getSelected();
+        return selected != null ? selected.account() : null;
     }
 
     /**
@@ -151,9 +217,8 @@ final class AccountList extends ObjectSelectionList<AccountEntry> {
      */
     void login(boolean online, Runnable onComplete) {
         // Skip if nothing is selected.
-        AccountEntry selected = this.getSelected();
-        if (selected == null) return;
-        Account account = selected.account();
+        Account account = this.selectedAccount();
+        if (account == null) return;
 
         // Check if we should log in online.
         if (online && account.canLogin()) {
@@ -184,10 +249,10 @@ final class AccountList extends ObjectSelectionList<AccountEntry> {
 
     void edit() {
         // Skip if nothing is selected.
-        AccountEntry selected = this.getSelected();
-        if (selected == null) return;
-        int index = this.children().indexOf(selected);
-        if (index < 0 || index >= IASStorage.ACCOUNTS.size()) return;
+        Account original = this.selectedAccount();
+        if (original == null) return;
+        int index = IASStorage.ACCOUNTS.indexOf(original);
+        if (index < 0) return;
 
         // Replace in storage.
         final Screen add = new AddPopupScreen(this.screen, true, account -> {
@@ -225,9 +290,8 @@ final class AccountList extends ObjectSelectionList<AccountEntry> {
      */
     void delete(boolean confirm) {
         // Skip if nothing is selected.
-        AccountEntry selected = this.getSelected();
-        if (selected == null) return;
-        Account account = selected.account();
+        Account account = this.selectedAccount();
+        if (account == null) return;
 
         // Skip confirmation if shift is pressed.
         if (!confirm) {
@@ -302,8 +366,12 @@ final class AccountList extends ObjectSelectionList<AccountEntry> {
      * @return Player skin, fetched or default
      */
     PlayerSkin skin(AccountEntry entry) {
+        // Group headers have no skin.
+        Account account = entry.account();
+        if (account == null) return DefaultPlayerSkin.get(IStonecutter.NIL_UUID);
+
         // Get and return the skin if already stored.
-        UUID uuid = entry.account().skin();
+        UUID uuid = account.skin();
         PlayerSkin skin = SKINS.get(uuid);
         if (skin != null) return skin;
 
@@ -365,32 +433,8 @@ final class AccountList extends ObjectSelectionList<AccountEntry> {
      *
      * @param entry Target entry
      */
-    void swapUp(AccountEntry entry) {
-        // Get and validate indexes.
-        int idx = this.children().indexOf(entry);
-        if (idx < 0 || idx >= IASStorage.ACCOUNTS.size()) return;
-        int upIdx = idx - 1;
-        if (upIdx < 0) return;
-
-        // Move storage.
-        IASStorage.ACCOUNTS.set(idx, IASStorage.ACCOUNTS.get(upIdx));
-        IASStorage.ACCOUNTS.set(upIdx, entry.account());
-
-        // Save storage.
-        try {
-            IAS.disclaimersStorage();
-            IAS.saveStorage();
-        } catch (Throwable t) {
-            LOGGER.error("IAS: Unable to save storage.", t);
-        }
-
-        // Move elements.
-        //? if <1.21.10 {
-        /*this.children().set(idx, this.children().get(upIdx));
-        this.children().set(upIdx, entry);
-        this.setSelected(entry);
-        *///?} else
-        this.swap(idx, upIdx);
+    void swapUp(@Nullable AccountEntry entry) {
+        if (entry != null) this.swap(entry, -1);
     }
 
     /**
@@ -398,16 +442,40 @@ final class AccountList extends ObjectSelectionList<AccountEntry> {
      *
      * @param entry Target entry
      */
-    void swapDown(AccountEntry entry) {
-        // Get and validate indexes.
-        int idx = this.children().indexOf(entry);
-        if (idx < 0 || idx >= IASStorage.ACCOUNTS.size()) return;
-        int downIdx = idx + 1;
-        if (downIdx >= this.children().size() || downIdx >= IASStorage.ACCOUNTS.size()) return;
+    void swapDown(@Nullable AccountEntry entry) {
+        if (entry != null) this.swap(entry, 1);
+    }
 
-        // Move storage.
-        IASStorage.ACCOUNTS.set(idx, IASStorage.ACCOUNTS.get(downIdx));
-        IASStorage.ACCOUNTS.set(downIdx, entry.account());
+    /**
+     * Swaps the entry with the nearest account of the same source, if possible.
+     *
+     * @param entry     Target entry
+     * @param direction Swap direction, {@code -1} for up and {@code 1} for down
+     */
+    private void swap(@NotNull AccountEntry entry, int direction) {
+        // Group headers can't be moved.
+        Account account = entry.account();
+        if (account == null) return;
+
+        // Find the storage index.
+        int idx = IASStorage.ACCOUNTS.indexOf(account);
+        if (idx < 0) return;
+
+        // Find the nearest account of the same source in the requested direction.
+        // (so that an account can't jump over another source's group)
+        String key = sourceKey(account);
+        int target = -1;
+        for (int i = idx + direction; i >= 0 && i < IASStorage.ACCOUNTS.size(); i += direction) {
+            if (sourceKey(IASStorage.ACCOUNTS.get(i)).equals(key)) {
+                target = i;
+                break;
+            }
+        }
+        if (target < 0) return;
+
+        // Move the storage.
+        IASStorage.ACCOUNTS.set(idx, IASStorage.ACCOUNTS.get(target));
+        IASStorage.ACCOUNTS.set(target, account);
 
         // Save storage.
         try {
@@ -417,13 +485,14 @@ final class AccountList extends ObjectSelectionList<AccountEntry> {
             LOGGER.error("IAS: Unable to save storage.", t);
         }
 
-        // Move elements.
-        //? if <1.21.10 {
-        /*this.children().set(idx, this.children().get(downIdx));
-        this.children().set(downIdx, entry);
-        this.setSelected(entry);
-        *///?} else
-        this.swap(idx, downIdx);
+        // Rebuild the list and keep the moved account selected.
+        this.update(this.screen.search().getValue());
+        for (AccountEntry child : this.children()) {
+            if (Objects.equals(child.account(), account)) {
+                this.setSelected(child);
+                break;
+            }
+        }
     }
 
     /**

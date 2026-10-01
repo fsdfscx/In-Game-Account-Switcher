@@ -18,6 +18,7 @@
   "ias.accounts.tip.type.offline": "离线",
   "ias.accounts.tip.type.microsoft": "微软",
   "ias.accounts.tip.type.yggdrasil": "外置",
+  "ias.accounts.group": "%s（%s）",
   "ias.accounts.tip.insecure": "此帐号使用不安全的储存设定（例如加密），并且容易遭到入侵。点选「编辑」并将其更改为使用安全属性。",
   "ias.login": "登入",
   "ias.login.initializing": "初始化中...",

@@ -278,11 +278,21 @@ public final class AccountScreen extends Screen {
             return;
         }
 
+        // Group headers don't have any account actions.
+        Account account = selected.account();
+        if (account == null) {
+            this.offlineLogin.active = this.edit.active = this.delete.active = false;
+            this.login.active = false;
+            this.login.setTooltip(null);
+            this.skin.visible = false;
+            return;
+        }
+
         // Enable always-on buttons.
         this.offlineLogin.active = this.edit.active = this.delete.active = true;
 
         // Enable online login button if we can log in.
-        if (selected.account().canLogin()) {
+        if (account.canLogin()) {
             this.login.active = true;
             this.login.setTooltip(null);
         } else {
@@ -326,8 +336,8 @@ public final class AccountScreen extends Screen {
         // Ctrl+C to copy name. (Ctrl+Shift+C to copy UUID) {
         if (key == IInput.C && control) {
             AccountEntry selected = this.list.getSelected();
-            if (selected != null) {
-                Account account = selected.account();
+            Account account = selected != null ? selected.account() : null;
+            if (account != null) {
                 this.minecraft.keyboardHandler.setClipboard(shift ? account.uuid().toString() : account.name());
                 return true;
             }

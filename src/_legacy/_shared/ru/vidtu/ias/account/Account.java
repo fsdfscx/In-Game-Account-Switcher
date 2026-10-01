@@ -150,7 +150,8 @@ public sealed interface Account permits OfflineAccount, MicrosoftAccount, Yggdra
             case "ias:offline_v1" -> OfflineAccount.readV1(in);
             case "ias:offline_v2" -> OfflineAccount.readV2(in);
             case "ias:microsoft_v1" -> MicrosoftAccount.read(in);
-            case "ias:yggdrasil_v1" -> YggdrasilAccount.read(in);
+            case "ias:yggdrasil_v1" -> YggdrasilAccount.readV1(in);
+            case "ias:yggdrasil_v2" -> YggdrasilAccount.readV2(in);
             default -> throw new IllegalArgumentException("Unknown account type: " + type);
         };
     }
