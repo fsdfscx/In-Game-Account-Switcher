@@ -69,16 +69,17 @@ public final class YggdrasilCreate {
     /**
      * Locates the server, authenticates and creates the account.
      *
-     * @param url      Target server URL
-     * @param username Account username
-     * @param password Account password
-     * @param crypt    Crypt to encrypt the account with
-     * @param handler  Creation handler
+     * @param url          Target server URL
+     * @param username     Account username
+     * @param password     Account password
+     * @param savePassword Whether to persist the password (encrypted) for automatic re-login
+     * @param crypt        Crypt to encrypt the account with
+     * @param handler      Creation handler
      * @return Future that will complete on creation, with {@code null} on cancel, or exceptionally
      */
     @CheckReturnValue
     @NotNull
-    public static CompletableFuture<Void> create(@NotNull String url, @NotNull String username, @NotNull String password, @NotNull Crypt crypt, @NotNull CreateHandler handler) {
+    public static CompletableFuture<Void> create(@NotNull String url, @NotNull String username, @NotNull String password, boolean savePassword, @NotNull Crypt crypt, @NotNull CreateHandler handler) {
         // Stop if cancelled.
         if (handler.cancelled()) return CompletableFuture.completedFuture(null);
 
@@ -99,10 +100,10 @@ public final class YggdrasilCreate {
                 // Stop if cancelled.
                 if (handler.cancelled()) return;
 
-                // Encrypt the account data.
+                // Encrypt the account data. (the password is only stored if the user opted in)
                 LOGGER.info("IAS: Encrypting tokens...");
                 handler.stage(YggdrasilAccount.ENCRYPTING);
-                byte[] data = encrypt(crypt, username, password, session.accessToken(), session.clientToken());
+                byte[] data = encrypt(crypt, username, savePassword ? password : "", session.accessToken(), session.clientToken());
 
                 // Create the account.
                 LOGGER.info("IAS: Successfully added {}", session);
@@ -124,7 +125,7 @@ public final class YggdrasilCreate {
      *
      * @param crypt       Crypt to use
      * @param username    Account username
-     * @param password    Account password
+     * @param password    Account password, empty if the password should not be persisted
      * @param accessToken Session access token
      * @param clientToken Session client token
      * @return Encrypted account data (crypt type + encrypted payload)

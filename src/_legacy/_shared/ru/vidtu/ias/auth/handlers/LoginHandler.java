@@ -58,6 +58,24 @@ public interface LoginHandler {
     CompletableFuture<String> password();
 
     /**
+     * Requests the account password.
+     * <p>
+     * Used for external (Yggdrasil) accounts when the stored session is no longer valid and the
+     * password was not persisted (the user chose not to save it), so that the account can still
+     * be re-authenticated without re-adding it.
+     *
+     * @param server   API root of the authentication server
+     * @param username Account username
+     * @return Future that will complete with password string on password enter, with {@code null} on cancel, exceptionally on error
+     * @implNote Completes with {@code null} (cancel) by default, to keep the older handlers source-compatible
+     */
+    @CheckReturnValue
+    @NotNull
+    default CompletableFuture<String> accountPassword(@NotNull String server, @NotNull String username) {
+        return CompletableFuture.completedFuture(null);
+    }
+
+    /**
      * Called when an authentication has performed successfully.
      *
      * @param data    Auth data

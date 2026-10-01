@@ -24,6 +24,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.MultiLineLabel;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
@@ -42,6 +43,7 @@ import ru.vidtu.ias.crypt.PasswordCrypt;
 import ru.vidtu.ias.platform.IStonecutter;
 import ru.vidtu.ias.utils.exceptions.FriendlyException;
 
+import java.time.Duration;
 import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -112,6 +114,16 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
     private PopupButton done;
 
     /**
+     * Save-password toggle.
+     */
+    private PopupButton savePasswordButton;
+
+    /**
+     * Whether to persist the account password for automatic re-login, {@code false} by default.
+     */
+    private boolean savePassword = false;
+
+    /**
      * Whether the account is already being added and the UI should be locked.
      */
     private boolean locked = false;
@@ -135,6 +147,11 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
      * Error note.
      */
     private MultiLineLabel errorNote;
+
+    /**
+     * Detailed error text, shown below the panel.
+     */
+    private Component errorText;
 
     /**
      * Creates a new add screen.
@@ -185,6 +202,7 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
             this.username = null;
             this.password = null;
             this.done = null;
+            this.savePasswordButton = null;
 
             // Add crypt password box.
             this.cryptPassword = new PopupBox(this.font, cx - 100, cy - 10 + 5, 178, 20, this.cryptPassword, Component.translatable("ias.password"), this::enterCryptPassword, true);
@@ -225,13 +243,20 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
         this.password.addFormatter((s, i) -> IASConfig.passwordEchoing ? FormattedCharSequence.forward("*".repeat(s.length()), Style.EMPTY) : FormattedCharSequence.EMPTY);
         this.addRenderableWidget(this.password);
 
+        // Add save-password toggle.
+        this.savePasswordButton = new PopupButton(cx - 125, cy + 50, 250, 20, Component.empty(), btn -> this.toggleSavePassword(), Supplier::get);
+        this.savePasswordButton.setTooltip(Tooltip.create(Component.translatable("ias.yggdrasil.savePassword.tip")));
+        this.savePasswordButton.setTooltipDelay(Duration.ofMillis(250L));
+        this.addRenderableWidget(this.savePasswordButton);
+        this.updateSavePasswordButton(true);
+
         // Add done button.
-        this.done = new PopupButton(cx - 125, cy + 102, 122, 20, CommonComponents.GUI_DONE, btn -> this.submit(), Supplier::get);
+        this.done = new PopupButton(cx - 125, cy + 96, 122, 20, CommonComponents.GUI_DONE, btn -> this.submit(), Supplier::get);
         this.done.color(0.5F, 1.0F, 0.5F, true);
         this.addRenderableWidget(this.done);
 
         // Add cancel button.
-        PopupButton cancel = new PopupButton(cx + 3, cy + 102, 122, 20, CommonComponents.GUI_CANCEL, btn -> this.onClose(), Supplier::get);
+        PopupButton cancel = new PopupButton(cx + 3, cy + 96, 122, 20, CommonComponents.GUI_CANCEL, btn -> this.onClose(), Supplier::get);
         cancel.color(1.0F, 1.0F, 1.0F, true);
         this.addRenderableWidget(cancel);
 
@@ -263,6 +288,38 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
 
         // Rebuild the UI.
         this.init(this.width, this.height);
+    }
+
+    /**
+     * Toggles whether to persist the account password.
+     */
+    private void toggleSavePassword() {
+        // Flip.
+        this.savePassword = !this.savePassword;
+
+        // Update.
+        this.updateSavePasswordButton(false);
+    }
+
+    /**
+     * Updates the {@link #savePasswordButton} text and color.
+     *
+     * @param instant Whether the color change should be instant
+     */
+    private void updateSavePasswordButton(boolean instant) {
+        // Prevent NPE.
+        if (this.savePasswordButton == null) return;
+
+        // Update the text.
+        this.savePasswordButton.setMessage(Component.translatable("ias.yggdrasil.savePassword",
+                Component.translatable(this.savePassword ? "ias.yggdrasil.savePassword.on" : "ias.yggdrasil.savePassword.off")));
+
+        // Update the color.
+        if (this.savePassword) {
+            this.savePasswordButton.color(0.5F, 1.0F, 0.5F, instant);
+        } else {
+            this.savePasswordButton.color(1.0F, 0.5F, 0.5F, instant);
+        }
     }
 
     /**
@@ -307,8 +364,12 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
         this.locked = true;
         this.type(false);
 
+        // Clear any previous error.
+        this.error = Float.NaN;
+        this.errorNote = null;
+
         // Start the creation.
-        YggdrasilCreate.create(url, user, pass, this.crypt, this);
+        YggdrasilCreate.create(url, user, pass, this.savePassword, this.crypt, this);
     }
 
     @Override
@@ -370,14 +431,14 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
             }
 
             // Render the label.
-            IStonecutter.renderMultilineLabelCentered(this.label, graphics, this.width / 2, this.height / 2 + 52);
+            IStonecutter.renderMultilineLabelCentered(this.label, graphics, this.width / 2, this.height / 2 + 74);
         }
 
         // Render the error note, if errored.
         if (Float.isFinite(this.error)) {
             // Create it first.
             if (this.errorNote == null) {
-                this.errorNote = MultiLineLabel.create(this.font, Component.translatable("ias.error.note").withStyle(ChatFormatting.AQUA), 245);
+                this.errorNote = MultiLineLabel.create(this.font, Objects.requireNonNullElse(this.errorText, Component.empty()).copy().withStyle(ChatFormatting.AQUA), 250);
             }
 
             // Fade in.
@@ -396,7 +457,7 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
             // Render BG.
             int w = this.errorNote.getWidth() / 4 + 2;
             int h = (this.errorNote.getLineCount() * 9) / 2 + 1;
-            int sy = this.height / 2 + 138;
+            int sy = this.height / 2 + 134;
             graphics.fill(cx - w, sy, cx + w, sy + h, 0x101010 | opacityMask);
             graphics.fill(cx - w + 1, sy - 1, cx + w - 1, sy, 0x101010 | opacityMask);
             graphics.fill(cx - w + 1, sy + h, cx + w - 1, sy + h + 1, 0x101010 | opacityMask);
@@ -406,7 +467,7 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
             pose.scale(0.5F, 0.5F);
             var renderer = graphics.textRenderer();
             renderer.defaultParameters(renderer.defaultParameters().withOpacity(opacityFloat));
-            this.errorNote.visitLines(net.minecraft.client.gui.TextAlignment.CENTER, this.width, this.height + 276, 9, renderer);
+            this.errorNote.visitLines(net.minecraft.client.gui.TextAlignment.CENTER, this.width, this.height + 268, 9, renderer);
             pose.popMatrix();
         }
     }
@@ -490,13 +551,14 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
         // Unlock the UI.
         this.locked = false;
 
-        // Flush the stage.
+        // Show a short stage, with the detailed reason below the panel.
         FriendlyException probable = FriendlyException.friendlyInChain(error);
         String key = probable != null ? probable.key() : "ias.error";
-        Component component = Component.translatable(key).withStyle(ChatFormatting.RED);
         synchronized (this.lock) {
-            this.stage = component;
+            this.stage = Component.translatable("ias.error.short").withStyle(ChatFormatting.RED);
+            this.errorText = Component.translatable(key);
             this.label = null;
+            this.errorNote = null;
             this.error = 0.0F;
         }
 

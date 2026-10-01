@@ -288,9 +288,10 @@ public final class YggdrasilAccount implements Account {
                 }
 
                 // Validate the stored session.
+                final YggdrasilServer server = new YggdrasilServer(this.server, this.name, false);
                 LOGGER.info("IAS: Validating session...");
                 handler.stage(VALIDATING);
-                return YggdrasilAuth.validate(new YggdrasilServer(this.server, this.name, false), access, client.get()).thenComposeAsync(valid -> {
+                return YggdrasilAuth.validate(server, access, client.get()).thenComposeAsync(valid -> {
                     // Skip if cancelled.
                     if (handler.cancelled()) return CompletableFuture.completedFuture(null);
 
@@ -303,7 +304,23 @@ public final class YggdrasilAccount implements Account {
                     LOGGER.info("IAS: Session is (probably) expired. Re-authenticating...");
                     handler.stage(AUTHENTICATING);
                     recrypt.set(true);
-                    return YggdrasilAuth.authenticate(new YggdrasilServer(this.server, this.name, false), username.get(), password.get(), client.get());
+
+                    // Use the stored password, if the user chose to persist it.
+                    if (!password.get().isEmpty()) {
+                        return YggdrasilAuth.authenticate(server, username.get(), password.get(), client.get());
+                    }
+
+                    // Otherwise, ask for the password. (the session expired and nothing was saved)
+                    LOGGER.info("IAS: No stored password, asking the user...");
+                    return handler.accountPassword(this.server, username.get()).thenComposeAsync(entered -> {
+                        // Stop on cancel.
+                        if (entered == null || handler.cancelled()) {
+                            throw new FriendlyException("Account password was not provided.", "ias.error.yggdrasil.password");
+                        }
+
+                        // Authenticate with the entered password. (not persisted)
+                        return YggdrasilAuth.authenticate(server, username.get(), entered, client.get());
+                    }, IAS.executor());
                 }, IAS.executor());
             }, IAS.executor()).thenAcceptAsync(session -> {
                 // Skip if cancelled.

@@ -65,10 +65,28 @@ public final class YggdrasilAuth {
     public static final String API_LOCATION_HEADER = "x-authlib-injector-api-location";
 
     /**
-     * Request client.
+     * Request client for credential-bearing requests.
+     * <p>
+     * Redirects are disabled on purpose: the {@code authenticate}/{@code refresh} bodies contain
+     * the plain account password/access token, and an attacker-controlled (or misconfigured)
+     * server could otherwise get them re-sent to another host via a {@code 30x} response.
      */
     @NotNull
     private static final HttpClient CLIENT = HttpClient.newBuilder()
+            .connectTimeout(IAS.TIMEOUT)
+            .version(HttpClient.Version.HTTP_2)
+            .followRedirects(HttpClient.Redirect.NEVER)
+            .executor(IAS.executor())
+            .build();
+
+    /**
+     * Request client for server discovery.
+     * <p>
+     * Redirects are followed here, since the request carries no credentials. Note that Java
+     * refuses to follow an HTTPS-to-HTTP downgrade with {@link HttpClient.Redirect#NORMAL}.
+     */
+    @NotNull
+    private static final HttpClient CLIENT_REDIRECT = HttpClient.newBuilder()
             .connectTimeout(IAS.TIMEOUT)
             .version(HttpClient.Version.HTTP_2)
             .followRedirects(HttpClient.Redirect.NORMAL)
@@ -109,16 +127,19 @@ public final class YggdrasilAuth {
         // Validate the URL early, so that the user gets a proper error message.
         final URI uri;
         try {
-            uri = URI.create(url);
+            uri = URI.create(target);
             if (uri.getHost() == null) {
-                throw new IllegalArgumentException("No host in URL: " + url);
+                throw new IllegalArgumentException("No host in URL: " + target);
             }
         } catch (Throwable t) {
-            throw new FriendlyException("Invalid Yggdrasil server URL: " + url, t, "ias.error.yggdrasil.server");
+            throw new FriendlyException("Invalid Yggdrasil server URL: " + target, t, "ias.error.yggdrasil.server");
         }
 
+        // Refuse to send credentials over plaintext HTTP.
+        requireHttps(uri);
+
         // Send the request.
-        return CLIENT.sendAsync(HttpRequest.newBuilder()
+        return CLIENT_REDIRECT.sendAsync(HttpRequest.newBuilder()
                 .uri(uri)
                 .header("User-Agent", IAS.USER_AGENT)
                 .header("Accept", "application/json")
@@ -136,6 +157,9 @@ public final class YggdrasilAuth {
                 // Follow the API location header, if present. (relative to the response URL)
                 String location = response.headers().firstValue(API_LOCATION_HEADER).orElse(null);
                 URI base = location != null ? response.uri().resolve(location.strip()) : response.uri();
+
+                // Refuse an insecure API root, even if the original URL was secure.
+                requireHttps(base);
 
                 // Build and return the server.
                 String root = base.toString();
@@ -384,6 +408,22 @@ public final class YggdrasilAuth {
                 throw friendly(new RuntimeException("Unable to fetch Yggdrasil profile for '" + uuid + "' from '" + server + "'.", t));
             }
         }, IAS.executor());
+    }
+
+    /**
+     * Ensures the URI uses HTTPS, so that the credentials are never sent in plaintext.
+     *
+     * @param uri Target URI
+     * @return The same URI
+     * @throws FriendlyException If the URI is not an HTTPS one
+     */
+    @Contract(value = "_ -> param1", pure = true)
+    @NotNull
+    private static URI requireHttps(@NotNull URI uri) {
+        if (!"https".equalsIgnoreCase(uri.getScheme())) {
+            throw new FriendlyException("Insecure (non-HTTPS) Yggdrasil server URL: " + uri, "ias.error.yggdrasil.https");
+        }
+        return uri;
     }
 
     /**

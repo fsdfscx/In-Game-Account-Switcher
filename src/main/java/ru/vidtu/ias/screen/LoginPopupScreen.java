@@ -95,6 +95,16 @@ final class LoginPopupScreen extends Screen implements LoginHandler {
     private MultiLineLabel cryptPasswordTip;
 
     /**
+     * Title of the currently requested password.
+     */
+    private Component passwordTitle = Component.translatable("ias.password");
+
+    /**
+     * Tip of the currently requested password.
+     */
+    private Component passwordTip = Component.translatable("ias.password.tip");
+
+    /**
      * Non-NAN, if some sort of error is present.
      */
     private float error = Float.NaN;
@@ -149,7 +159,7 @@ final class LoginPopupScreen extends Screen implements LoginHandler {
         // Add password box, if future exists.
         if (this.passFuture != null) {
             // Add password box.
-            this.password = new PopupBox(this.font, this.width / 2 - 100, this.height / 2 - 10 + 5, 178, 20, this.password, Component.translatable("ias.password"), () -> {
+            this.password = new PopupBox(this.font, this.width / 2 - 100, this.height / 2 - 10 + 5, 178, 20, this.password, this.passwordTitle, () -> {
                 // Prevent NPE, just in case.
                 if (this.passFuture == null || this.password == null) return;
                 String value = this.password.getValue();
@@ -181,7 +191,7 @@ final class LoginPopupScreen extends Screen implements LoginHandler {
             this.password.setResponder(value -> button.active = !value.isBlank());
 
             // Create tip.
-            this.cryptPasswordTip = MultiLineLabel.create(this.font, Component.translatable("ias.password.tip").withColor(0xFF_FF_00), 320);
+            this.cryptPasswordTip = MultiLineLabel.create(this.font, this.passwordTip.copy().withColor(0xFF_FF_00), 320);
         }
     }
 
@@ -367,6 +377,10 @@ final class LoginPopupScreen extends Screen implements LoginHandler {
             this.password = null;
             this.cryptPasswordTip = null;
 
+            // Restore the default (Crypt) prompt.
+            this.passwordTitle = Component.translatable("ias.password");
+            this.passwordTip = Component.translatable("ias.password.tip");
+
             // Redraw.
             //? if >=1.21.11 {
             this.init(this.width, this.height);
@@ -384,6 +398,19 @@ final class LoginPopupScreen extends Screen implements LoginHandler {
 
         // Return created future.
         return this.passFuture;
+    }
+
+    @Override
+    public CompletableFuture<String> accountPassword(String server, String username) {
+        // Bruh.
+        assert this.minecraft != null;
+
+        // Switch the prompt to the account password.
+        this.passwordTitle = Component.translatable("ias.yggdrasil.password");
+        this.passwordTip = Component.translatable("ias.yggdrasil.password.prompt", username, server);
+
+        // Reuse the password prompt.
+        return this.password();
     }
 
     @Override
