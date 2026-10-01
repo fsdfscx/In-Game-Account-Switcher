@@ -20,8 +20,9 @@
 package ru.vidtu.ias.auth.yggdrasil;
 
 //? if >=26.2 {
+import com.google.common.collect.ArrayListMultimap;
+import com.google.common.collect.Multimap;
 import com.google.errorprone.annotations.CheckReturnValue;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.mojang.authlib.GameProfile;
@@ -32,6 +33,7 @@ import com.mojang.authlib.minecraft.InsecurePublicKeyException;
 import com.mojang.authlib.minecraft.MinecraftProfileTexture;
 import com.mojang.authlib.minecraft.MinecraftProfileTextures;
 import com.mojang.authlib.properties.Property;
+import com.mojang.authlib.properties.PropertyMap;
 //? if >=26.3 {
 import com.mojang.authlib.minecraft.SessionService;
 import com.mojang.authlib.services.ProfileResult;
@@ -58,7 +60,6 @@ import java.util.Base64;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -409,12 +410,14 @@ public final class YggdrasilSessionService implements SessionService {
         if (!matcher.matches()) {
             throw new IllegalArgumentException("Invalid UUID: " + id);
         }
-        GameProfile profile = new GameProfile(UUID.fromString(matcher.replaceAll(UUID_DASHED)), name);
+        UUID uuid = UUID.fromString(matcher.replaceAll(UUID_DASHED));
 
         // Read the properties. (textures, mostly)
-        JsonArray properties = json.has("properties") && json.get("properties").isJsonArray() ? json.getAsJsonArray("properties") : null;
-        if (properties != null) {
-            for (JsonElement element : properties) {
+        // Note: the properties must be collected into a mutable map, because the one that
+        // GameProfile(uuid, name) creates out of the box is immutable.
+        Multimap<String, Property> properties = ArrayListMultimap.create();
+        if (json.has("properties") && json.get("properties").isJsonArray()) {
+            for (JsonElement element : json.getAsJsonArray("properties")) {
                 // Skip invalid ones.
                 if (!element.isJsonObject()) continue;
                 JsonObject property = element.getAsJsonObject();
@@ -426,16 +429,15 @@ public final class YggdrasilSessionService implements SessionService {
 
                 // Put it.
                 if (pSignature == null) {
-                    profile.properties().put(pName, new Property(pName, pValue));
+                    properties.put(pName, new Property(pName, pValue));
                 } else {
-                    profile.properties().put(pName, new Property(pName, pValue, pSignature));
+                    properties.put(pName, new Property(pName, pValue, pSignature));
                 }
             }
         }
 
-        // Return it.
-        Objects.requireNonNull(profile, "Profile is null");
-        return profile;
+        // Create and return.
+        return new GameProfile(uuid, name, new PropertyMap(properties));
     }
 }
 //?} else {
