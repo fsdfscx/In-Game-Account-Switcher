@@ -190,6 +190,8 @@ public final class YggdrasilSessionService implements SessionService {
             token = rebound;
             response = this.join(profileId, token, serverId);
             if (response.statusCode() == 204) return;
+        } else {
+            LOGGER.warn("IAS: The session could not be re-bound to '{}'. If this authentication server binds the session to a single character, add the account with 'Save Password' enabled, so that the mod can re-authenticate and switch characters.", profileId);
         }
 
         // Rethrow, trying to expose the server-provided reason (which is much more readable than

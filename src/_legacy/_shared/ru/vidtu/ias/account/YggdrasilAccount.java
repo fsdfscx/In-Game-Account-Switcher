@@ -337,8 +337,22 @@ public final class YggdrasilAccount implements Account {
                     throw new RuntimeException("Unable to read the tokens.", t);
                 }
 
-                // Validate the stored session.
+                // The authentication server of this account.
                 final YggdrasilServer server = new YggdrasilServer(this.server, this.serverName, false);
+
+                // Some servers (e.g. Blessing Skin installations) reuse a single session token for
+                // the whole account and bind it to the character that was authenticated last, which
+                // makes the server reject joining as any other character. Re-authenticating (when
+                // the password is stored) both refreshes the token and re-binds it to this account's
+                // character, so the join succeeds.
+                if (!password.get().isEmpty()) {
+                    LOGGER.info("IAS: Authenticating to bind the session to this character...");
+                    handler.stage(AUTHENTICATING);
+                    recrypt.set(true);
+                    return authenticate(server, username.get(), password.get(), client.get());
+                }
+
+                // Validate the stored session.
                 LOGGER.info("IAS: Validating session...");
                 handler.stage(VALIDATING);
                 return YggdrasilAuth.validate(server, access, client.get()).thenComposeAsync(valid -> {
@@ -355,43 +369,20 @@ public final class YggdrasilAccount implements Account {
                     handler.stage(AUTHENTICATING);
                     recrypt.set(true);
 
-                    // Resolve the password: the stored one, or ask the user.
-                    CompletableFuture<String> credentials;
-                    if (!password.get().isEmpty()) {
-                        credentials = CompletableFuture.completedFuture(password.get());
-                    } else {
-                        LOGGER.info("IAS: No stored password, asking the user...");
-                        credentials = handler.accountPassword(this.server, username.get()).thenApplyAsync(entered -> {
-                            // Stop on cancel.
-                            if (entered == null) {
-                                throw new FriendlyException("Account password was not provided.", "ias.error.yggdrasil.password");
-                            }
+                    // Resolve the password: ask the user, since the stored one is empty here.
+                    LOGGER.info("IAS: No stored password, asking the user...");
+                    CompletableFuture<String> credentials = handler.accountPassword(this.server, username.get()).thenApplyAsync(entered -> {
+                        // Stop on cancel.
+                        if (entered == null) {
+                            throw new FriendlyException("Account password was not provided.", "ias.error.yggdrasil.password");
+                        }
 
-                            // Continue with the entered password. (not persisted)
-                            return entered;
-                        }, IAS.executor());
-                    }
+                        // Continue with the entered password. (not persisted)
+                        return entered;
+                    }, IAS.executor());
 
                     // Authenticate, selecting the character stored in this account.
-                    return credentials.thenComposeAsync(pw -> YggdrasilAuth.authenticate(server, username.get(), pw, client.get(), this.uuid), IAS.executor())
-                            .thenApplyAsync(result -> {
-                                // Prefer the character reported by the server.
-                                MCProfile selected = result.selectedProfile();
-                                if (selected == null) {
-                                    // Fall back to the character stored in this account.
-                                    selected = result.availableProfiles().stream()
-                                            .filter(profile -> profile.uuid().equals(this.uuid))
-                                            .findFirst().orElse(null);
-                                }
-
-                                // The character is gone (deleted on the server?).
-                                if (selected == null) {
-                                    throw new FriendlyException("The character is no longer available.", "ias.error.yggdrasil.profile");
-                                }
-
-                                // Create and return.
-                                return YggdrasilSession.of(result, selected);
-                            }, IAS.executor());
+                    return credentials.thenComposeAsync(pw -> authenticate(server, username.get(), pw, client.get()), IAS.executor());
                 }, IAS.executor());
             }, IAS.executor()).thenAcceptAsync(session -> {
                 // Skip if cancelled.
@@ -478,6 +469,38 @@ public final class YggdrasilAccount implements Account {
             // Handle.
             handler.error(new RuntimeException("Unable to begin Yggdrasil auth.", t));
         }
+    }
+
+    /**
+     * Authenticates with the credentials and returns the session bound to this account's character.
+     *
+     * @param server      Target authentication server
+     * @param username    Account username
+     * @param password    Account password
+     * @param clientToken Session client token
+     * @return Future that will complete with the authenticated session
+     */
+    @CheckReturnValue
+    @NotNull
+    private CompletableFuture<YggdrasilSession> authenticate(@NotNull YggdrasilServer server, @NotNull String username, @NotNull String password, @NotNull String clientToken) {
+        return YggdrasilAuth.authenticate(server, username, password, clientToken, this.uuid).thenApplyAsync(result -> {
+            // Prefer the character reported by the server.
+            MCProfile selected = result.selectedProfile();
+            if (selected == null) {
+                // Fall back to the character stored in this account.
+                selected = result.availableProfiles().stream()
+                        .filter(profile -> profile.uuid().equals(this.uuid))
+                        .findFirst().orElse(null);
+            }
+
+            // The character is gone (deleted on the server?).
+            if (selected == null) {
+                throw new FriendlyException("The character is no longer available.", "ias.error.yggdrasil.profile");
+            }
+
+            // Create and return.
+            return YggdrasilSession.of(result, selected);
+        }, IAS.executor());
     }
 
     @Contract(value = "null -> false", pure = true)
