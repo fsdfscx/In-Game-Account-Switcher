@@ -195,7 +195,7 @@ public final class YggdrasilSessionService implements SessionService {
         // Rethrow, trying to expose the server-provided reason (which is much more readable than
         // the raw JSON body) and to remove sensitive data.
         String detail = YggdrasilAuth.errorMessage(response.body());
-        String message = "Unable to join the server via '" + this.server + "': " + response.statusCode()
+        String message = "Unable to join the server via '" + this.server + "' as '" + profileId + "': " + response.statusCode()
                 + (detail != null ? ", error: " + detail : ", body: " + response.body());
         message = scrub(message, token);
         message = scrub(message, accessToken);

@@ -163,6 +163,11 @@ public final class YggdrasilCreate {
             throw new FriendlyException("The account has no characters.", "ias.error.yggdrasil.profile");
         }
 
+        // Log the characters, so that a mismatch can be spotted in the logs.
+        for (MCProfile profile : profiles) {
+            LOGGER.info("IAS: Character '{}' ({}) of '{}'.", profile.name(), profile.uuid(), server.name());
+        }
+
         // Authenticate each character, one by one. The requests are throttled, because some
         // servers rate-limit the authenticate endpoint to one request per second.
         int count = profiles.size();
