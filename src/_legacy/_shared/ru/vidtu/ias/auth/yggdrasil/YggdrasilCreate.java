@@ -117,7 +117,7 @@ public final class YggdrasilCreate {
 
                         // Authenticate every character. (the session is bound to a character)
                         handler.stage(YggdrasilAccount.ENCRYPTING);
-                        return create(server, username, password, savePassword, crypt, result);
+                        return create(handler, server, username, password, savePassword, crypt, result);
                     }, IAS.executor())
                     .thenAcceptAsync(accounts -> {
                         // Stop if cancelled.
@@ -125,6 +125,7 @@ public final class YggdrasilCreate {
 
                         // Hand the accounts over.
                         LOGGER.info("IAS: Successfully added {} character(s) of '{}'.", accounts.size(), server.name());
+                        handler.progress(accounts.size(), accounts.size());
                         handler.stage(YggdrasilAccount.FINALIZING);
                         handler.successAccounts(accounts);
                     }, IAS.executor());
@@ -140,6 +141,7 @@ public final class YggdrasilCreate {
     /**
      * Authenticates every character of the account and builds an account for each of them.
      *
+     * @param handler     Creation handler
      * @param server      Target server
      * @param username    Account username
      * @param password    Account password
@@ -150,7 +152,7 @@ public final class YggdrasilCreate {
      */
     @CheckReturnValue
     @NotNull
-    private static CompletableFuture<List<Account>> create(@NotNull YggdrasilServer server, @NotNull String username, @NotNull String password, boolean savePassword, @NotNull Crypt crypt, @NotNull YggdrasilAuthResult result) {
+    private static CompletableFuture<List<Account>> create(@NotNull CreateHandler handler, @NotNull YggdrasilServer server, @NotNull String username, @NotNull String password, boolean savePassword, @NotNull Crypt crypt, @NotNull YggdrasilAuthResult result) {
         // Determine the characters to add. (every character of the account)
         List<MCProfile> profiles = new ArrayList<>(result.availableProfiles());
         MCProfile selected = result.selectedProfile();
@@ -163,15 +165,23 @@ public final class YggdrasilCreate {
 
         // Authenticate each character, one by one. The requests are throttled, because some
         // servers rate-limit the authenticate endpoint to one request per second.
-        CompletableFuture<List<Account>> chain = CompletableFuture.completedFuture(new ArrayList<>(profiles.size()));
-        for (MCProfile profile : profiles) {
-            chain = chain.thenComposeAsync(accounts -> delay().thenComposeAsync(
-                    ignored -> authenticate(server, username, password, savePassword, crypt, profile),
-                    IAS.executor()
-            ).thenApplyAsync(account -> {
-                accounts.add(account);
-                return accounts;
-            }, IAS.executor()), IAS.executor());
+        int count = profiles.size();
+        CompletableFuture<List<Account>> chain = CompletableFuture.completedFuture(new ArrayList<>(count));
+        for (int i = 0; i < count; i++) {
+            final MCProfile profile = profiles.get(i);
+            final int position = i + 1;
+            chain = chain.thenComposeAsync(accounts -> {
+                // Show which character is currently being bound, before the throttling wait below.
+                handler.progress(position - 1, count);
+                handler.stage(YggdrasilAccount.CHARACTER, profile.name(), position, count);
+                return delay().thenComposeAsync(
+                        ignored -> authenticate(server, username, password, savePassword, crypt, profile),
+                        IAS.executor()
+                ).thenApplyAsync(account -> {
+                    accounts.add(account);
+                    return accounts;
+                }, IAS.executor());
+            }, IAS.executor());
         }
         return chain;
     }

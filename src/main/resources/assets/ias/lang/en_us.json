@@ -72,6 +72,7 @@
   "ias.login.yggdrasil.locate": "Locating auth server...",
   "ias.login.yggdrasil.validate": "Validating session...",
   "ias.login.yggdrasil.auth": "Authenticating with %s...",
+  "ias.login.yggdrasil.character": "Adding character %s (%s/%s)...",
   "ias.error.yggdrasil.server": "Unable to locate the authentication server. Make sure the URL is correct and the server is reachable. See the log files and/or game console for technical details. While we have tried to remove any sensitive data, you should *NOT* publish your logs.",
   "ias.error.yggdrasil.https": "The authentication server URL must use HTTPS. Plaintext HTTP is refused, because your password would be sent unencrypted over the network. See the log files and/or game console for technical details. While we have tried to remove any sensitive data, you should *NOT* publish your logs.",
   "ias.error.yggdrasil.password": "The session has expired and the account password was not saved. Add the account again with 'Save Password' enabled, or enter the password when prompted. See the log files and/or game console for technical details. While we have tried to remove any sensitive data, you should *NOT* publish your logs.",

@@ -49,6 +49,19 @@ public interface CreateHandler {
     void stage(@NotNull String stage, @Nullable Object @NotNull ... args);
 
     /**
+     * Reports the progress of a multi-step creation. (e.g. the characters of an external account)
+     * <p>
+     * Implementations may render this as a progress bar. The default implementation does nothing,
+     * so that implementations which don't have a progress bar stay unaffected.
+     *
+     * @param completed Amount of completed steps
+     * @param total     Total amount of steps, {@code 0} if unknown
+     */
+    default void progress(int completed, int total) {
+        // NO-OP by default.
+    }
+
+    /**
      * Called when an authentication has performed successfully.
      *
      * @param account Created account

@@ -72,6 +72,7 @@
   "ias.login.yggdrasil.locate": "正在定位认证服务器……",
   "ias.login.yggdrasil.validate": "正在校验会话……",
   "ias.login.yggdrasil.auth": "正在向 %s 认证……",
+  "ias.login.yggdrasil.character": "正在添加角色 %s（%s/%s）……",
   "ias.error.yggdrasil.server": "无法定位认证服务器。请确认 URL 正确且服务器可访问。技术细节请查看日志文件和/或游戏控制台。尽管我们已尝试移除敏感数据，但您仍*不应*公开日志。",
   "ias.error.yggdrasil.https": "认证服务器 URL 必须使用 HTTPS。已拒绝明文 HTTP，否则您的密码将以未加密形式经网络传输。技术细节请查看日志文件和/或游戏控制台。尽管我们已尝试移除敏感数据，但您仍*不应*公开日志。",
   "ias.error.yggdrasil.password": "会话已过期，且未保存账号密码。请开启“保存密码”后重新添加账号，或在提示时输入密码。技术细节请查看日志文件和/或游戏控制台。尽管我们已尝试移除敏感数据，但您仍*不应*公开日志。",

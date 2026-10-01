@@ -140,6 +140,16 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
     private MultiLineLabel label;
 
     /**
+     * Amount of completed progress steps, {@code 0} if unknown.
+     */
+    private int progressDone;
+
+    /**
+     * Total amount of progress steps, {@code 0} if unknown.
+     */
+    private int progressTotal;
+
+    /**
      * Non-NAN, if some sort of error is present.
      */
     private float error = Float.NaN;
@@ -368,9 +378,13 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
         this.locked = true;
         this.type(false);
 
-        // Clear any previous error.
+        // Clear any previous error and progress.
         this.error = Float.NaN;
         this.errorNote = null;
+        synchronized (this.lock) {
+            this.progressDone = 0;
+            this.progressTotal = 0;
+        }
 
         // Start the creation.
         YggdrasilCreate.create(url, user, pass, this.savePassword, this.crypt, this);
@@ -436,6 +450,20 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
 
             // Render the label.
             IStonecutter.renderMultilineLabelCentered(this.label, graphics, this.width / 2, this.height / 2 + 74);
+
+            // Render the progress bar, if the amount of steps is known.
+            int total = this.progressTotal;
+            if (total > 0) {
+                int done = Math.min(this.progressDone, total);
+                int barWidth = 250;
+                int barX = cx - barWidth / 2;
+                int barY = this.height / 2 + 92;
+                graphics.fill(barX, barY, barX + barWidth, barY + 3, 0xFF_18_18_22);
+                int filled = barWidth * done / total;
+                if (filled > 0) {
+                    graphics.fill(barX, barY, barX + filled, barY + 3, 0xFF_60_E0_60);
+                }
+            }
         }
 
         // Render the error note, if errored.
@@ -518,6 +546,21 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
     }
 
     @Override
+    public void progress(int completed, int total) {
+        // Bruh.
+        assert this.minecraft != null;
+
+        // Skip if not current screen.
+        if (this != this.currentScreen()) return;
+
+        // Flush the progress.
+        synchronized (this.lock) {
+            this.progressDone = completed;
+            this.progressTotal = total;
+        }
+    }
+
+    @Override
     public void success(MicrosoftAccount account) {
         // Should never happen for external accounts.
         this.successAccount(account);
@@ -585,6 +628,8 @@ final class YggdrasilPopupScreen extends Screen implements CreateHandler {
             this.label = null;
             this.errorNote = null;
             this.error = 0.0F;
+            this.progressDone = 0;
+            this.progressTotal = 0;
         }
 
         // Re-enable the form.

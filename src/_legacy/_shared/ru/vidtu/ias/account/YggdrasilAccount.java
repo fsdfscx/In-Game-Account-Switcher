@@ -98,6 +98,12 @@ public final class YggdrasilAccount implements Account {
     public static final String AUTHENTICATING = "ias.login.yggdrasil.auth";
 
     /**
+     * Adding a character. (one of many)
+     */
+    @NotNull
+    public static final String CHARACTER = "ias.login.yggdrasil.character";
+
+    /**
      * Finalizing login.
      */
     @NotNull
