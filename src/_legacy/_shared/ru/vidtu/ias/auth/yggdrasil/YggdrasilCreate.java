@@ -27,7 +27,9 @@ import org.slf4j.LoggerFactory;
 import ru.vidtu.ias.IAS;
 import ru.vidtu.ias.account.YggdrasilAccount;
 import ru.vidtu.ias.auth.handlers.CreateHandler;
+import ru.vidtu.ias.auth.microsoft.fields.MCProfile;
 import ru.vidtu.ias.crypt.Crypt;
+import ru.vidtu.ias.utils.exceptions.FriendlyException;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -96,9 +98,39 @@ public final class YggdrasilCreate {
             LOGGER.info("IAS: Authenticating with '{}'...", server);
             handler.stage(YggdrasilAccount.AUTHENTICATING, server.name());
             String clientToken = UUID.randomUUID().toString();
-            return YggdrasilAuth.authenticate(server, username, password, clientToken).thenAcceptAsync(session -> {
+            return YggdrasilAuth.authenticate(server, username, password, clientToken, null).thenComposeAsync(result -> {
                 // Stop if cancelled.
-                if (handler.cancelled()) return;
+                if (handler.cancelled()) return CompletableFuture.<YggdrasilSession>completedFuture(null);
+
+                // The account has no characters at all.
+                if (result.empty()) {
+                    throw new FriendlyException("The account has no characters.", "ias.error.yggdrasil.profile");
+                }
+
+                // The server already selected a character for us.
+                if (result.selectedProfile() != null) {
+                    return CompletableFuture.completedFuture(YggdrasilSession.of(result, result.selectedProfile()));
+                }
+
+                // Only one character - select it silently.
+                if (result.availableProfiles().size() == 1) {
+                    return select(server, username, password, clientToken, result.availableProfiles().get(0));
+                }
+
+                // Multiple characters - ask the user which one to use.
+                LOGGER.info("IAS: The account has {} characters, asking the user...", result.availableProfiles().size());
+                return handler.selectProfile(result.availableProfiles()).thenComposeAsync(chosen -> {
+                    // Stop on cancel.
+                    if (chosen == null || handler.cancelled()) {
+                        throw new FriendlyException("Character was not selected.", "ias.error.yggdrasil.profile");
+                    }
+
+                    // Select and continue.
+                    return select(server, username, password, clientToken, chosen);
+                }, IAS.executor());
+            }, IAS.executor()).thenAcceptAsync(session -> {
+                // Stop if cancelled.
+                if (session == null || handler.cancelled()) return;
 
                 // Encrypt the account data. (the password is only stored if the user opted in)
                 LOGGER.info("IAS: Encrypting tokens...");
@@ -117,6 +149,29 @@ public final class YggdrasilCreate {
 
             // Return null.
             return null;
+        }, IAS.executor());
+    }
+
+    /**
+     * Re-authenticates with the chosen character selected.
+     *
+     * @param server      Target server
+     * @param username    Account username
+     * @param password    Account password
+     * @param clientToken Client token
+     * @param profile     Character to select
+     * @return Future that will complete with the session bound to the character
+     */
+    @CheckReturnValue
+    @NotNull
+    private static CompletableFuture<YggdrasilSession> select(@NotNull YggdrasilServer server, @NotNull String username, @NotNull String password, @NotNull String clientToken, @NotNull MCProfile profile) {
+        // Send the request.
+        return YggdrasilAuth.authenticate(server, username, password, clientToken, profile.uuid()).thenApplyAsync(result -> {
+            // Prefer the server-reported profile, fall back to the requested one.
+            MCProfile selected = result.selectedProfile() != null ? result.selectedProfile() : profile;
+
+            // Create and return.
+            return YggdrasilSession.of(result, selected);
         }, IAS.executor());
     }
 

@@ -63,6 +63,7 @@
   "ias.yggdrasil.server.hint": "https://example.com/api/yggdrasil/",
   "ias.yggdrasil.username": "邮箱/用户名",
   "ias.yggdrasil.password": "密码",
+  "ias.yggdrasil.profile": "请选择角色：",
   "ias.yggdrasil.password.prompt": "会话已过期。请输入 '%s' 在 '%s' 上的密码。除非在添加账号时开启“保存密码”，否则不会保存。",
   "ias.yggdrasil.savePassword": "保存密码：%s",
   "ias.yggdrasil.savePassword.on": "开",

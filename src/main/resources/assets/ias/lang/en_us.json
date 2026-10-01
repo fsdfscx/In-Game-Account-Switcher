@@ -63,6 +63,7 @@
   "ias.yggdrasil.server.hint": "https://example.com/api/yggdrasil/",
   "ias.yggdrasil.username": "Email/Username",
   "ias.yggdrasil.password": "Password",
+  "ias.yggdrasil.profile": "Choose a character:",
   "ias.yggdrasil.password.prompt": "Session expired. Enter the password for '%s' on '%s'. It won't be saved unless you enable 'Save Password' when adding the account.",
   "ias.yggdrasil.savePassword": "Save Password: %s",
   "ias.yggdrasil.savePassword.on": "ON",

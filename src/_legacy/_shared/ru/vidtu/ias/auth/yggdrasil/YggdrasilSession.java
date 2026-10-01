@@ -19,52 +19,36 @@
 
 package ru.vidtu.ias.auth.yggdrasil;
 
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParseException;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import ru.vidtu.ias.auth.microsoft.fields.MCProfile;
-import ru.vidtu.ias.utils.GSONUtils;
 
 import java.util.UUID;
 
 /**
- * Yggdrasil authentication session, as returned by the
- * {@code authserver/authenticate} and {@code authserver/refresh} endpoints.
+ * Yggdrasil session that is already bound to a concrete character (profile).
+ * <p>
+ * Built from a {@link YggdrasilAuthResult} after the character has been chosen,
+ * see {@link YggdrasilCreate} and {@code YggdrasilAccount#login}.
  *
  * @param accessToken Session access token (used for {@code joinServer})
  * @param clientToken Session client token (refreshed/validated together with the access token)
  * @param uuid        Selected profile UUID
  * @param name        Selected profile name
  * @author VidTu
- * @see YggdrasilAuth#authenticate(YggdrasilServer, String, String, String)
- * @see YggdrasilAuth#refresh(YggdrasilServer, String, String)
  */
 public record YggdrasilSession(@NotNull String accessToken, @NotNull String clientToken, @NotNull UUID uuid, @NotNull String name) {
     /**
-     * Extracts the session from the JSON.
+     * Creates a session bound to the specified profile.
      *
-     * @param json Target JSON
-     * @return Extracted session
-     * @throws JsonParseException If unable to extract
+     * @param result  Raw authentication result
+     * @param profile Profile to bind to
+     * @return Created session
      */
-    @Contract(value = "_ -> new", pure = true)
+    @Contract(value = "_, _ -> new", pure = true)
     @NotNull
-    public static YggdrasilSession fromJson(@NotNull JsonObject json) {
-        try {
-            // Extract the tokens.
-            String accessToken = GSONUtils.getStringOrThrow(json, "accessToken");
-            String clientToken = GSONUtils.getStringOrThrow(json, "clientToken");
-
-            // Extract the selected profile. (some servers may not return it)
-            MCProfile profile = MCProfile.fromJson(GSONUtils.getObjectOrThrow(json, "selectedProfile"));
-
-            // Create and return.
-            return new YggdrasilSession(accessToken, clientToken, profile.uuid(), profile.name());
-        } catch (Throwable t) {
-            // Rethrow.
-            throw new JsonParseException("Unable to parse YggdrasilSession: " + json, t);
-        }
+    public static YggdrasilSession of(@NotNull YggdrasilAuthResult result, @NotNull MCProfile profile) {
+        return new YggdrasilSession(result.accessToken(), result.clientToken(), profile.uuid(), profile.name());
     }
 
     @Contract(pure = true)

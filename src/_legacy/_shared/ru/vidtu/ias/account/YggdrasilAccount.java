@@ -28,6 +28,7 @@ import org.slf4j.LoggerFactory;
 import ru.vidtu.ias.IAS;
 import ru.vidtu.ias.auth.LoginData;
 import ru.vidtu.ias.auth.handlers.LoginHandler;
+import ru.vidtu.ias.auth.microsoft.fields.MCProfile;
 import ru.vidtu.ias.auth.yggdrasil.YggdrasilAuth;
 import ru.vidtu.ias.auth.yggdrasil.YggdrasilServer;
 import ru.vidtu.ias.auth.yggdrasil.YggdrasilSession;
@@ -305,22 +306,43 @@ public final class YggdrasilAccount implements Account {
                     handler.stage(AUTHENTICATING);
                     recrypt.set(true);
 
-                    // Use the stored password, if the user chose to persist it.
+                    // Resolve the password: the stored one, or ask the user.
+                    CompletableFuture<String> credentials;
                     if (!password.get().isEmpty()) {
-                        return YggdrasilAuth.authenticate(server, username.get(), password.get(), client.get());
+                        credentials = CompletableFuture.completedFuture(password.get());
+                    } else {
+                        LOGGER.info("IAS: No stored password, asking the user...");
+                        credentials = handler.accountPassword(this.server, username.get()).thenApplyAsync(entered -> {
+                            // Stop on cancel.
+                            if (entered == null) {
+                                throw new FriendlyException("Account password was not provided.", "ias.error.yggdrasil.password");
+                            }
+
+                            // Continue with the entered password. (not persisted)
+                            return entered;
+                        }, IAS.executor());
                     }
 
-                    // Otherwise, ask for the password. (the session expired and nothing was saved)
-                    LOGGER.info("IAS: No stored password, asking the user...");
-                    return handler.accountPassword(this.server, username.get()).thenComposeAsync(entered -> {
-                        // Stop on cancel.
-                        if (entered == null || handler.cancelled()) {
-                            throw new FriendlyException("Account password was not provided.", "ias.error.yggdrasil.password");
-                        }
+                    // Authenticate, selecting the character stored in this account.
+                    return credentials.thenComposeAsync(pw -> YggdrasilAuth.authenticate(server, username.get(), pw, client.get(), this.uuid), IAS.executor())
+                            .thenApplyAsync(result -> {
+                                // Prefer the character reported by the server.
+                                MCProfile selected = result.selectedProfile();
+                                if (selected == null) {
+                                    // Fall back to the character stored in this account.
+                                    selected = result.availableProfiles().stream()
+                                            .filter(profile -> profile.uuid().equals(this.uuid))
+                                            .findFirst().orElse(null);
+                                }
 
-                        // Authenticate with the entered password. (not persisted)
-                        return YggdrasilAuth.authenticate(server, username.get(), entered, client.get());
-                    }, IAS.executor());
+                                // The character is gone (deleted on the server?).
+                                if (selected == null) {
+                                    throw new FriendlyException("The character is no longer available.", "ias.error.yggdrasil.profile");
+                                }
+
+                                // Create and return.
+                                return YggdrasilSession.of(result, selected);
+                            }, IAS.executor());
                 }, IAS.executor());
             }, IAS.executor()).thenAcceptAsync(session -> {
                 // Skip if cancelled.

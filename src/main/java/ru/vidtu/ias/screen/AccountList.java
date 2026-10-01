@@ -334,6 +334,9 @@ final class AccountList extends ObjectSelectionList<AccountEntry> {
             //?} else
             /*return this.minecraft.getSkinManager().getOrLoad(profile);*/
         }, IAS.executor()).thenAcceptAsync(loaded -> {
+            // Skip if the skin manager returned nothing. (e.g. a conflicting skin mod)
+            if (loaded == null) return;
+
             // Put into map.
             loaded.ifPresent(newSkin -> SKINS.put(uuid, newSkin));
         }, this.minecraft).exceptionally(t -> {

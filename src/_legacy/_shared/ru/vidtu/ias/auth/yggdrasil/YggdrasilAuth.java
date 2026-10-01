@@ -232,16 +232,21 @@ public final class YggdrasilAuth {
 
     /**
      * Authenticates with the Yggdrasil server using the username and password.
+     * <p>
+     * The result is <b>raw</b>: if the account owns several characters and none was requested,
+     * the server may leave {@code selectedProfile} empty, and the caller has to pick one from
+     * the available profiles and authenticate again with it selected.
      *
      * @param server      Target server
      * @param username    Account username (email or, on some servers, a nickname)
      * @param password    Account password
      * @param clientToken Client token to use
-     * @return Future that will complete with the session or exceptionally
+     * @param profileId   Character UUID to select, {@code null} to let the server decide
+     * @return Future that will complete with the raw result or exceptionally
      */
     @CheckReturnValue
     @NotNull
-    public static CompletableFuture<YggdrasilSession> authenticate(@NotNull YggdrasilServer server, @NotNull String username, @NotNull String password, @NotNull String clientToken) {
+    public static CompletableFuture<YggdrasilAuthResult> authenticate(@NotNull YggdrasilServer server, @NotNull String username, @NotNull String password, @NotNull String clientToken, @Nullable UUID profileId) {
         // Create the payload.
         JsonObject agent = new JsonObject();
         agent.addProperty("name", "Minecraft");
@@ -253,6 +258,9 @@ public final class YggdrasilAuth {
         request.addProperty("password", password);
         request.addProperty("clientToken", clientToken);
         request.addProperty("requestUser", true);
+        if (profileId != null) {
+            request.addProperty("selectedProfile", profileId.toString().replace("-", ""));
+        }
         String payload = GSONUtils.GSON.toJson(request);
 
         // Send the request.
@@ -274,10 +282,10 @@ public final class YggdrasilAuth {
                     throw new FriendlyException("Yggdrasil authenticate failed: " + status + ", error: " + error, "ias.error.yggdrasil.auth");
                 }
 
-                // Decode the session and return it.
+                // Decode the result and return it.
                 JsonObject json = GSONUtils.GSON.fromJson(response.body(), JsonObject.class);
                 Objects.requireNonNull(json, "Response is null");
-                return YggdrasilSession.fromJson(json);
+                return YggdrasilAuthResult.fromJson(json);
             } catch (Throwable t) {
                 // Rethrow, trying to remove sensitive data.
                 String message = "Unable to authenticate with '" + server + "' (" + response + " with " + response.headers() + "): " + response.body();
@@ -331,7 +339,7 @@ public final class YggdrasilAuth {
      */
     @CheckReturnValue
     @NotNull
-    public static CompletableFuture<YggdrasilSession> refresh(@NotNull YggdrasilServer server, @NotNull String accessToken, @NotNull String clientToken) {
+    public static CompletableFuture<YggdrasilAuthResult> refresh(@NotNull YggdrasilServer server, @NotNull String accessToken, @NotNull String clientToken) {
         // Create the payload.
         JsonObject request = new JsonObject();
         request.addProperty("accessToken", accessToken);
@@ -356,10 +364,10 @@ public final class YggdrasilAuth {
                     throw new FriendlyException("Yggdrasil refresh failed: " + status, "ias.error.yggdrasil.session");
                 }
 
-                // Decode the session and return it.
+                // Decode the result and return it.
                 JsonObject json = GSONUtils.GSON.fromJson(response.body(), JsonObject.class);
                 Objects.requireNonNull(json, "Response is null");
-                return YggdrasilSession.fromJson(json);
+                return YggdrasilAuthResult.fromJson(json);
             } catch (Throwable t) {
                 // Rethrow, trying to remove sensitive data.
                 String message = "Unable to refresh Yggdrasil session for '" + server + "' (" + response + " with " + response.headers() + "): " + response.body();
