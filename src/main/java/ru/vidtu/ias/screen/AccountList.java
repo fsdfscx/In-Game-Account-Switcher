@@ -35,6 +35,9 @@ import ru.vidtu.ias.IAS;
 import ru.vidtu.ias.account.Account;
 import ru.vidtu.ias.account.OfflineAccount;
 import ru.vidtu.ias.auth.LoginData;
+//? if >=26.2 {
+import ru.vidtu.ias.auth.AccountProfiles;
+//?}
 import ru.vidtu.ias.config.IASStorage;
 
 import java.util.Locale;
@@ -313,7 +316,13 @@ final class AccountList extends ObjectSelectionList<AccountEntry> {
 
         // Load the skin.
         CompletableFuture.supplyAsync(() -> {
-            // Fetch the profile
+            // Fetch the profile from the account's own authentication source: external accounts
+            // must be queried on their own server, and the vanilla ones on the original session
+            // service, because the currently active one may belong to a different server.
+            //? if >=26.2 {
+            ProfileResult own = AccountProfiles.profile(entry.account(), uuid);
+            if (own != null) return own.profile();
+            //?}
             //? if >=1.21.10 {
             ProfileResult result = this.minecraft.services().sessionService().fetchProfile(uuid, false);
             //?} else

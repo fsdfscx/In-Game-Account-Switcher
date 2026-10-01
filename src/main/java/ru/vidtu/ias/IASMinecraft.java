@@ -59,6 +59,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.vidtu.ias.auth.LoginData;
 //? if >=26.2 {
+import ru.vidtu.ias.auth.AccountProfiles;
 import ru.vidtu.ias.auth.yggdrasil.YggdrasilSessionService;
 //?}
 import ru.vidtu.ias.config.IASConfig;
@@ -347,6 +348,12 @@ public final class IASMinecraft {
                 minecraft.getCameraEntity() != null || minecraft.gameMode != null || minecraft.getSingleplayerServer() != null) {
             return CompletableFuture.failedFuture(new FriendlyException("Changing accounts in world.", "ias.error.world"));
         }
+
+        // Remember the original (vanilla) session service before the first switch, so that the
+        // account list can still resolve the skins of the vanilla accounts afterwards.
+        //? if >=26.2 {
+        AccountProfiles.capture(minecraft.services().sessionService());
+        //?}
 
         // Create everything async, because it lags.
         return CompletableFuture.runAsync(() -> {

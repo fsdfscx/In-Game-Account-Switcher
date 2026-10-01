@@ -296,6 +296,33 @@ public final class YggdrasilSessionService implements SessionService {
     @Override
     @Nullable
     public ProfileResult fetchProfile(@NotNull UUID profileId, boolean requireSecure) {
+        return fetchProfile(this.server, profileId);
+    }
+
+    /**
+     * Fetches the profile (with textures) from the specified authentication server.
+     * <p>
+     * Unlike the instance method, this does not require an active session and can be used
+     * to resolve the skin of an account that is <b>not</b> the currently active one.
+     *
+     * @param apiRoot   API root of the authentication server
+     * @param profileId Target profile UUID
+     * @return Fetched profile, {@code null} if there is none or on error
+     */
+    @Nullable
+    public static ProfileResult fetchProfile(@NotNull String apiRoot, @NotNull UUID profileId) {
+        return fetchProfile(new YggdrasilServer(apiRoot, "", false), profileId);
+    }
+
+    /**
+     * Fetches the profile (with textures) from the specified authentication server.
+     *
+     * @param server    Target authentication server
+     * @param profileId Target profile UUID
+     * @return Fetched profile, {@code null} if there is none or on error
+     */
+    @Nullable
+    private static ProfileResult fetchProfile(@NotNull YggdrasilServer server, @NotNull UUID profileId) {
         // Build the endpoint.
         String path = "sessionserver/session/minecraft/profile/" + profileId.toString().replace("-", "");
 
@@ -303,7 +330,7 @@ public final class YggdrasilSessionService implements SessionService {
         HttpResponse<String> response;
         try {
             response = CLIENT.send(HttpRequest.newBuilder()
-                    .uri(URI.create(this.server.endpoint(path)))
+                    .uri(URI.create(server.endpoint(path)))
                     .header("User-Agent", IAS.USER_AGENT)
                     .header("Accept", "application/json")
                     .timeout(IAS.TIMEOUT)
@@ -311,7 +338,7 @@ public final class YggdrasilSessionService implements SessionService {
                     .build(), HttpResponse.BodyHandlers.ofString());
         } catch (Throwable t) {
             // Log and return null. (this is a cache-like lookup, the game handles null)
-            LOGGER.warn("IAS: Unable to fetch profile from '{}'.", this.server, t);
+            LOGGER.warn("IAS: Unable to fetch profile from '{}'.", server, t);
             return null;
         }
 
@@ -321,7 +348,7 @@ public final class YggdrasilSessionService implements SessionService {
 
         // Skip on errors.
         if (code != 200) {
-            LOGGER.warn("IAS: Unable to fetch profile from '{}': {}", this.server, code);
+            LOGGER.warn("IAS: Unable to fetch profile from '{}': {}", server, code);
             return null;
         }
 
@@ -329,7 +356,7 @@ public final class YggdrasilSessionService implements SessionService {
         try {
             return new ProfileResult(profile(parse(response.body())));
         } catch (Throwable t) {
-            LOGGER.warn("IAS: Unable to parse profile from '{}'.", this.server, t);
+            LOGGER.warn("IAS: Unable to parse profile from '{}'.", server, t);
             return null;
         }
     }
