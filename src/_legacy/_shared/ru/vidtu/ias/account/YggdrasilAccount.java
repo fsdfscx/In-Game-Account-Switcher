@@ -373,7 +373,11 @@ public final class YggdrasilAccount implements Account {
             }, IAS.executor()).exceptionallyAsync(t -> {
                 // Probable case - no internet connection.
                 if (IUtils.anyInCausalChain(t, err -> err instanceof UnresolvedAddressException || err instanceof UnknownHostException || err instanceof NoRouteToHostException || err instanceof HttpTimeoutException || err instanceof ConnectException)) {
-                    throw new FriendlyException("Unable to connect to the Yggdrasil server.", t, "ias.error.connect");
+                    // Handle error.
+                    handler.error(new FriendlyException("Unable to connect to the Yggdrasil server.", t, "ias.error.connect"));
+
+                    // Return null.
+                    return null;
                 }
 
                 // Handle error.
