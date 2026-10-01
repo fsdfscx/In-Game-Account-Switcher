@@ -25,9 +25,11 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.mojang.authlib.GameProfile;
+import com.mojang.authlib.SignatureState;
 import com.mojang.authlib.exceptions.AuthenticationException;
 import com.mojang.authlib.exceptions.AuthenticationUnavailableException;
 import com.mojang.authlib.minecraft.InsecurePublicKeyException;
+import com.mojang.authlib.minecraft.MinecraftProfileTexture;
 import com.mojang.authlib.minecraft.MinecraftProfileTextures;
 import com.mojang.authlib.properties.Property;
 //? if >=26.3 {
@@ -52,6 +54,10 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Matcher;
@@ -245,7 +251,46 @@ public final class YggdrasilSessionService implements SessionService {
     @Override
     @Nullable
     public MinecraftProfileTextures unpackTextures(@NotNull Property packedTextures) {
-        return this.delegate.unpackTextures(packedTextures);
+        try {
+            // Decode the base64 textures payload.
+            byte[] decoded = Base64.getDecoder().decode(packedTextures.value());
+            JsonObject json = GSONUtils.GSON.fromJson(new String(decoded, StandardCharsets.UTF_8), JsonObject.class);
+            if (json == null) return this.delegate.unpackTextures(packedTextures);
+
+            // Parse the textures.
+            Map<MinecraftProfileTexture.Type, MinecraftProfileTexture> textures = new EnumMap<>(MinecraftProfileTexture.Type.class);
+            if (json.has("textures") && json.get("textures").isJsonObject()) {
+                JsonObject all = json.getAsJsonObject("textures");
+                for (MinecraftProfileTexture.Type type : MinecraftProfileTexture.Type.values()) {
+                    // Skip missing ones.
+                    if (!all.has(type.name()) || !all.get(type.name()).isJsonObject()) continue;
+                    JsonObject texture = all.getAsJsonObject(type.name());
+                    if (!texture.has("url") || !texture.get("url").isJsonPrimitive()) continue;
+
+                    // Read the metadata. (e.g. the "slim" model marker)
+                    Map<String, String> metadata = new HashMap<>(0);
+                    if (texture.has("metadata") && texture.get("metadata").isJsonObject()) {
+                        for (Map.Entry<String, JsonElement> entry : texture.getAsJsonObject("metadata").entrySet()) {
+                            metadata.put(entry.getKey(), entry.getValue().getAsString());
+                        }
+                    }
+
+                    // Put it.
+                    textures.put(type, new MinecraftProfileTexture(texture.get("url").getAsString(), metadata));
+                }
+            }
+
+            // Note: third-party signatures can't be verified with the official key set, so the
+            // textures are treated as unsigned instead of being dropped.
+            return new MinecraftProfileTextures(textures.get(MinecraftProfileTexture.Type.SKIN),
+                    textures.get(MinecraftProfileTexture.Type.CAPE),
+                    textures.get(MinecraftProfileTexture.Type.ELYTRA),
+                    SignatureState.UNSIGNED);
+        } catch (Throwable t) {
+            // Log and fall back to the original session service.
+            LOGGER.warn("IAS: Unable to decode the textures of '{}'.", this.server, t);
+            return this.delegate.unpackTextures(packedTextures);
+        }
     }
 
     @Override
