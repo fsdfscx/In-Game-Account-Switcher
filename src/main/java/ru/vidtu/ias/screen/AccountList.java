@@ -379,8 +379,10 @@ final class AccountList extends ObjectSelectionList<AccountEntry> {
         skin = DefaultPlayerSkin.get(uuid);
         SKINS.put(uuid, skin);
 
-        // Skip fetching offline skins.
-        if (uuid.version() != 4) return skin;
+        // Offline accounts have name-derived UUIDs and no real skin to fetch.
+        // Note: they must be detected by their type, not by the UUID version, because some
+        // authentication servers also use name-based (version 3) UUIDs for real characters.
+        if (account instanceof OfflineAccount) return skin;
 
         // Load the skin.
         CompletableFuture.supplyAsync(() -> {
