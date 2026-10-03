@@ -72,7 +72,7 @@ public final class HardwareCrypt implements Crypt {
     private static final byte @NotNull [] EMPTY_MAC = {};
 
     /**
-     * List of environmental keys used for hardware password.
+     * List of environmental keys used by the older hardware password.
      */
     @NotNull
     @Unmodifiable
@@ -82,11 +82,39 @@ public final class HardwareCrypt implements Crypt {
             "MINECRAFT_IN_GAME_ACCOUNT_SWITCHER_VERY_NERDY_SYSTEM_ENV");
 
     /**
-     * List of system properties used for hardware password.
+     * Environmental keys that stay the same for the same user.
+     * <p>
+     * Unlike the full {@link #ENV} list, this excludes values that can change without the user
+     * changing anything: {@code TEMP}/{@code TMP} (some launchers point them to a per-launch
+     * directory) and {@code LOGONSERVER} (it depends on whether the machine is domain-joined and
+     * on which domain controller answered last).
+     */
+    @NotNull
+    @Unmodifiable
+    private static final List<String> STABLE_ENV = List.of("COMPUTERNAME", "PROCESSOR_ARCHITECTURE",
+            "PROCESSOR_REVISION", "PROCESSOR_IDENTIFIER", "PROCESSOR_LEVEL", "NUMBER_OF_PROCESSORS", "OS", "USERNAME",
+            "USERDOMAIN", "USERDOMAIN_ROAMINGPROFILE", "APPDATA", "HOMEPATH", "LOCALAPPDATA",
+            "MINECRAFT_IN_GAME_ACCOUNT_SWITCHER_VERY_NERDY_SYSTEM_ENV");
+
+    /**
+     * List of system properties used by the older hardware password.
      */
     @NotNull
     @Unmodifiable
     private static final List<String> PROPS = List.of("java.io.tmpdir", "native.encoding", "user.name",
+            "user.home", "user.country", "sun.io.unicode.encoding", "stderr.encoding", "sun.cpu.endian",
+            "sun.cpu.isalist", "sun.jnu.encoding", "stdout.encoding", "sun.arch.data.model",
+            "user.language", "user.variant", "minecraft.inGameAccountSwitcher.veryNerdySystemProperty");
+
+    /**
+     * System properties that stay the same for the same user.
+     * <p>
+     * Unlike the full {@link #PROPS} list, this excludes {@code java.io.tmpdir}, which follows
+     * {@code TEMP} and therefore can be different on every launch.
+     */
+    @NotNull
+    @Unmodifiable
+    private static final List<String> STABLE_PROPS = List.of("native.encoding", "user.name",
             "user.home", "user.country", "sun.io.unicode.encoding", "stderr.encoding", "sun.cpu.endian",
             "sun.cpu.isalist", "sun.jnu.encoding", "stdout.encoding", "sun.arch.data.model",
             "user.language", "user.variant", "minecraft.inGameAccountSwitcher.veryNerdySystemProperty");
@@ -159,7 +187,7 @@ public final class HardwareCrypt implements Crypt {
             out.write(iv);
 
             // Generate the password.
-            String pwd = this.hardwarePassword();
+            String pwd = this.hardwarePassword(false);
 
             // Encrypt and write the data.
             byte[] data = Crypt.pbkdfAesEncrypt(decrypted, pwd, salt, iv);
@@ -176,33 +204,53 @@ public final class HardwareCrypt implements Crypt {
     @Contract(pure = true)
     @Override
     public byte @NotNull [] decrypt(byte @NotNull [] encrypted) {
+        // Read the salt, IV and data.
+        byte[] salt = new byte[128];
+        byte[] iv = new byte[16];
+        byte[] data;
         try (ByteArrayInputStream in = new ByteArrayInputStream(encrypted)) {
-            // Read the salt.
-            byte[] salt = new byte[128];
             int read = in.read(salt);
             if (read != 128) {
                 throw new EOFException("Not enough salt bytes: " + read);
             }
-
-            // Read the IV.
-            byte[] iv = new byte[16];
             read = in.read(iv);
             if (read != 16) {
                 throw new EOFException("Not enough IV bytes: " + read);
             }
-
-            // Generate the password.
-            String pwd = this.hardwarePassword();
-
-            // Read the data.
-            byte[] data = in.readAllBytes();
-
-            // Decrypt and return.
-            return Crypt.pbkdfAesDecrypt(data, pwd, salt, iv);
+            data = in.readAllBytes();
         } catch (Throwable t) {
-            // Rethrow.
             throw new RuntimeException("Unable to decrypt using HardwareCrypt.", t);
         }
+
+        // Try the current password first, then the older one that also used values which can
+        // change on their own, so that the accounts encrypted by the previous versions of the
+        // mod can still be read. (and re-encrypted with the stable password on the next save)
+        Throwable failure = null;
+        for (String password : this.passwords()) {
+            try {
+                return Crypt.pbkdfAesDecrypt(data, password, salt, iv);
+            } catch (Throwable t) {
+                failure = t;
+            }
+        }
+
+        // Rethrow.
+        throw new RuntimeException("Unable to decrypt using HardwareCrypt.", failure);
+    }
+
+    /**
+     * Gets the passwords to try, in order, when decrypting.
+     *
+     * @return Passwords, the current one first
+     */
+    @Contract(pure = true)
+    @NotNull
+    private String @NotNull [] passwords() {
+        // Version 1 data is always encrypted with the old, unstable password.
+        if (this.version < 2) return new String[]{this.hardwarePassword(true)};
+
+        // The stable password is used for everything encrypted by this version.
+        return new String[]{this.hardwarePassword(false), this.hardwarePassword(true)};
     }
 
     @Contract(value = "null -> false", pure = true)
@@ -238,12 +286,17 @@ public final class HardwareCrypt implements Crypt {
     /**
      * Creates a key from various hardware things.
      *
+     * @param volatileParts Whether to include the parts that can change on their own without the
+     *                      user changing anything, e.g. the MAC address (Windows rotates it daily
+     *                      when "Random hardware addresses" is enabled for Wi-Fi) or the temporary
+     *                      directory. The old password included them, which made the accounts
+     *                      impossible to decrypt after such a change.
      * @return Created password
      * @throws RuntimeException If unable to create the password
      */
     @Contract(pure = true)
     @NotNull
-    private String hardwarePassword() {
+    private String hardwarePassword(boolean volatileParts) {
         try {
             // Calculate the "hardware ID".
             try (ByteArrayOutputStream byteOut = new ByteArrayOutputStream();
@@ -259,7 +312,7 @@ public final class HardwareCrypt implements Crypt {
                 out.write(System.lineSeparator().getBytes(StandardCharsets.UTF_8));
 
                 // System properties.
-                for (String key : PROPS) {
+                for (String key : volatileParts ? PROPS : STABLE_PROPS) {
                     String value = System.getProperty(key);
                     if (value == null) continue;
                     out.write(value.getBytes(StandardCharsets.UTF_8));
@@ -268,142 +321,15 @@ public final class HardwareCrypt implements Crypt {
                 // Environmental info.
                 // Can be undefined in Mac/Linux distributions, too lazy to test, but if it's null
                 // it will stay null anyway, so should be persistent.
-                for (String key : ENV) {
+                for (String key : volatileParts ? ENV : STABLE_ENV) {
                     String value = System.getenv(key);
                     if (value == null) continue;
                     out.write(value.getBytes(StandardCharsets.UTF_8));
                 }
 
-                // Network interfaces.
-                List<NetworkInterface> nets;
-                try {
-                    nets = NetworkInterface.networkInterfaces().toList();
-                } catch (SocketException ignored) {
-                    nets = List.of();
-                }
-                for (NetworkInterface net : nets) {
-                    if (net.isVirtual() || net.isLoopback()) continue;
-                    out.write(net.getName().getBytes(StandardCharsets.UTF_8));
-                    String displayName = net.getDisplayName();
-                    if (displayName != null) {
-                        out.write(displayName.getBytes(StandardCharsets.UTF_8));
-                    }
-                    byte[] mac = EMPTY_MAC;
-                    try {
-                        mac = Objects.requireNonNullElse(net.getHardwareAddress(), EMPTY_MAC);
-                    } catch (SocketException e) {
-                        // Log into trace. (disabled for MOST users)
-                        LOGGER.trace("Unable to get MAC: {}", net, e);
-                    }
-                    out.write(mac);
-                    try {
-                        out.writeInt(net.getMTU());
-                    } catch (SocketException e) {
-                        // Log into trace. (disabled for MOST users)
-                        LOGGER.trace("Unable to get MTU: {}", net, e);
-                    }
-                }
-
-                // OSHI data, if available.
-                try {
-                    // Generate the basic OSHI data.
-                    Class<?> sysInfoClass = Class.forName("oshi.SystemInfo");
-                    Class<?> osClass = Class.forName("oshi.software.os.OperatingSystem");
-                    Class<?> hwLayerClass = Class.forName("oshi.hardware.HardwareAbstractionLayer");
-                    Object sysInfo = sysInfoClass.getConstructor().newInstance();
-                    Object os = sysInfoClass.getMethod("getOperatingSystem").invoke(sysInfo);
-                    Object hwLayer = sysInfoClass.getMethod("getHardware").invoke(sysInfo);
-
-                    // Generate other OSHI data.
-                    Class<?> sysClass = Class.forName("oshi.hardware.ComputerSystem");
-                    Object sys = hwLayerClass.getMethod("getComputerSystem").invoke(hwLayer);
-                    Class<?> boardClass = Class.forName("oshi.hardware.Baseboard");
-                    Object board = sysClass.getMethod("getBaseboard").invoke(sys);
-                    Class<?> firmwareClass = Class.forName("oshi.hardware.Firmware");
-                    Object firmware = sysClass.getMethod("getFirmware").invoke(sys);
-                    Class<?> diskClass = Class.forName("oshi.hardware.HWDiskStore");
-                    List<?> disks = (List<?>) hwLayerClass.getMethod("getDiskStores").invoke(hwLayer);
-                    Method diskNameMethod = diskClass.getMethod("getName");
-                    Method diskModelMethod = diskClass.getMethod("getModel");
-                    Method diskSerialMethod = diskClass.getMethod("getSerial");
-                    Method diskSizeMethod = diskClass.getMethod("getSize");
-                    // Not using displays - some cheap ones report unplugging when turned off.
-                    Class<?> cardClass = Class.forName("oshi.hardware.GraphicsCard");
-                    List<?> cards = (List<?>) hwLayerClass.getMethod("getGraphicsCards").invoke(hwLayer);
-                    Method cardNameMethod = cardClass.getMethod("getName");
-                    Method cardIdMethod = cardClass.getMethod("getDeviceId");
-                    Method cardVendorMethod = cardClass.getMethod("getVendor");
-                    Method cardRamMethod = cardClass.getMethod("getVRam");
-
-                    // Extract OS data.
-                    int osBit = (int) osClass.getMethod("getBitness").invoke(os);
-                    String osFamily = (String) osClass.getMethod("getFamily").invoke(os);
-                    String osManufacturer = (String) osClass.getMethod("getManufacturer").invoke(os);
-                    out.writeInt(osBit);
-                    out.write(osFamily.getBytes(StandardCharsets.UTF_8));
-                    out.write(osManufacturer.getBytes(StandardCharsets.UTF_8));
-
-                    // Extract Sys data.
-                    String hwUid = (String) sysClass.getMethod("getHardwareUUID").invoke(sys);
-                    String hwManufacturer = (String) sysClass.getMethod("getManufacturer").invoke(sys);
-                    String hwModel = (String) sysClass.getMethod("getModel").invoke(sys);
-                    out.write(hwUid.getBytes(StandardCharsets.UTF_8));
-                    out.write(hwManufacturer.getBytes(StandardCharsets.UTF_8));
-                    out.write(hwModel.getBytes(StandardCharsets.UTF_8));
-
-                    // Extract Board data.
-                    String boardSerial = (String) boardClass.getMethod("getSerialNumber").invoke(board);
-                    String boardManufacturer = (String) boardClass.getMethod("getManufacturer").invoke(board);
-                    String boardModel = (String) boardClass.getMethod("getModel").invoke(board);
-                    String boardVersion = (String) boardClass.getMethod("getVersion").invoke(board);
-                    out.write(boardSerial.getBytes(StandardCharsets.UTF_8));
-                    out.write(boardManufacturer.getBytes(StandardCharsets.UTF_8));
-                    out.write(boardModel.getBytes(StandardCharsets.UTF_8));
-                    out.write(boardVersion.getBytes(StandardCharsets.UTF_8));
-
-                    // Extract Firmware data.
-                    String firmwareName = (String) firmwareClass.getMethod("getName").invoke(firmware);
-                    // Not using BIOS version and release date - can be updated.
-                    String firmwareDescription = (String) firmwareClass.getMethod("getDescription").invoke(firmware);
-                    String firmwareManufacturer = (String) firmwareClass.getMethod("getManufacturer").invoke(firmware);
-                    out.write(firmwareName.getBytes(StandardCharsets.UTF_8));
-                    out.write(firmwareDescription.getBytes(StandardCharsets.UTF_8));
-                    out.write(firmwareManufacturer.getBytes(StandardCharsets.UTF_8));
-
-                    // Extract DiscStore[] data.
-                    // Not using partitions - can be changed.
-                    for (Object disk : disks) {
-                        String diskName = (String) diskNameMethod.invoke(disk);
-                        String diskModel = (String) diskModelMethod.invoke(disk);
-                        String diskSerial = (String) diskSerialMethod.invoke(disk);
-                        long diskSize = (long) diskSizeMethod.invoke(disk);
-                        out.write(diskName.getBytes(StandardCharsets.UTF_8));
-                        out.write(diskModel.getBytes(StandardCharsets.UTF_8));
-                        out.write(diskSerial.getBytes(StandardCharsets.UTF_8));
-                        out.writeLong(diskSize);
-                    }
-
-                    // Not using graphics card data in V2, because
-                    // OSHI changed it video card data on Windows:
-                    // https://github.com/oshi/oshi/pull/2533
-                    // and this is bumped between 1.20.4 and 1.20.5.
-                    if (this.version < 2) {
-                        // Extract GraphicsCard[] data.
-                        // Not using version - can be a driver.
-                        for (Object card : cards) {
-                            String cardName = (String) cardNameMethod.invoke(card);
-                            String cardId = (String) cardIdMethod.invoke(card);
-                            String cardVendor = (String) cardVendorMethod.invoke(card);
-                            long cardRam = (long) cardRamMethod.invoke(card);
-                            out.write(cardName.getBytes(StandardCharsets.UTF_8));
-                            out.write(cardId.getBytes(StandardCharsets.UTF_8));
-                            out.write(cardVendor.getBytes(StandardCharsets.UTF_8));
-                            out.writeLong(cardRam);
-                        }
-                    }
-                } catch (Throwable t) {
-                    // Log into trace. (disabled for MOST users)
-                    LOGGER.trace("Unable to write OSHI data.", t);
+                // Everything below can change on its own, so it is only used by the old password.
+                if (volatileParts) {
+                    this.writeVolatileParts(out);
                 }
 
                 // Bake and return the "HWID".
@@ -412,6 +338,148 @@ public final class HardwareCrypt implements Crypt {
         } catch (Throwable t) {
             // Rethrow.
             throw new RuntimeException("Unable to create a hardware password.", t);
+        }
+    }
+
+    /**
+     * Writes the parts that can change on their own into the old hardware password.
+     *
+     * @param out Target stream
+     * @throws Exception If unable to write
+     */
+    @Contract(pure = true)
+    private void writeVolatileParts(@NotNull DataOutputStream out) throws Exception {
+        // Network interfaces.
+        List<NetworkInterface> nets;
+        try {
+            nets = NetworkInterface.networkInterfaces().toList();
+        } catch (SocketException ignored) {
+            nets = List.of();
+        }
+
+        for (NetworkInterface net : nets) {
+            if (net.isVirtual() || net.isLoopback()) continue;
+            out.write(net.getName().getBytes(StandardCharsets.UTF_8));
+            String displayName = net.getDisplayName();
+            if (displayName != null) {
+                out.write(displayName.getBytes(StandardCharsets.UTF_8));
+            }
+            byte[] mac = EMPTY_MAC;
+            try {
+                mac = Objects.requireNonNullElse(net.getHardwareAddress(), EMPTY_MAC);
+            } catch (SocketException e) {
+                // Log into trace. (disabled for MOST users)
+                LOGGER.trace("Unable to get MAC: {}", net, e);
+            }
+            out.write(mac);
+            try {
+                out.writeInt(net.getMTU());
+            } catch (SocketException e) {
+                // Log into trace. (disabled for MOST users)
+                LOGGER.trace("Unable to get MTU: {}", net, e);
+            }
+        }
+
+        // OSHI data, if available.
+        try {
+            // Generate the basic OSHI data.
+            Class<?> sysInfoClass = Class.forName("oshi.SystemInfo");
+            Class<?> osClass = Class.forName("oshi.software.os.OperatingSystem");
+            Class<?> hwLayerClass = Class.forName("oshi.hardware.HardwareAbstractionLayer");
+            Object sysInfo = sysInfoClass.getConstructor().newInstance();
+            Object os = sysInfoClass.getMethod("getOperatingSystem").invoke(sysInfo);
+            Object hwLayer = sysInfoClass.getMethod("getHardware").invoke(sysInfo);
+
+            // Generate other OSHI data.
+            Class<?> sysClass = Class.forName("oshi.hardware.ComputerSystem");
+            Object sys = hwLayerClass.getMethod("getComputerSystem").invoke(hwLayer);
+            Class<?> boardClass = Class.forName("oshi.hardware.Baseboard");
+            Object board = sysClass.getMethod("getBaseboard").invoke(sys);
+            Class<?> firmwareClass = Class.forName("oshi.hardware.Firmware");
+            Object firmware = sysClass.getMethod("getFirmware").invoke(sys);
+            Class<?> diskClass = Class.forName("oshi.hardware.HWDiskStore");
+            List<?> disks = (List<?>) hwLayerClass.getMethod("getDiskStores").invoke(hwLayer);
+            Method diskNameMethod = diskClass.getMethod("getName");
+            Method diskModelMethod = diskClass.getMethod("getModel");
+            Method diskSerialMethod = diskClass.getMethod("getSerial");
+            Method diskSizeMethod = diskClass.getMethod("getSize");
+            // Not using displays - some cheap ones report unplugging when turned off.
+            Class<?> cardClass = Class.forName("oshi.hardware.GraphicsCard");
+            List<?> cards = (List<?>) hwLayerClass.getMethod("getGraphicsCards").invoke(hwLayer);
+            Method cardNameMethod = cardClass.getMethod("getName");
+            Method cardIdMethod = cardClass.getMethod("getDeviceId");
+            Method cardVendorMethod = cardClass.getMethod("getVendor");
+            Method cardRamMethod = cardClass.getMethod("getVRam");
+
+            // Extract OS data.
+            int osBit = (int) osClass.getMethod("getBitness").invoke(os);
+            String osFamily = (String) osClass.getMethod("getFamily").invoke(os);
+            String osManufacturer = (String) osClass.getMethod("getManufacturer").invoke(os);
+            out.writeInt(osBit);
+            out.write(osFamily.getBytes(StandardCharsets.UTF_8));
+            out.write(osManufacturer.getBytes(StandardCharsets.UTF_8));
+
+            // Extract Sys data.
+            String hwUid = (String) sysClass.getMethod("getHardwareUUID").invoke(sys);
+            String hwManufacturer = (String) sysClass.getMethod("getManufacturer").invoke(sys);
+            String hwModel = (String) sysClass.getMethod("getModel").invoke(sys);
+            out.write(hwUid.getBytes(StandardCharsets.UTF_8));
+            out.write(hwManufacturer.getBytes(StandardCharsets.UTF_8));
+            out.write(hwModel.getBytes(StandardCharsets.UTF_8));
+
+            // Extract Board data.
+            String boardSerial = (String) boardClass.getMethod("getSerialNumber").invoke(board);
+            String boardManufacturer = (String) boardClass.getMethod("getManufacturer").invoke(board);
+            String boardModel = (String) boardClass.getMethod("getModel").invoke(board);
+            String boardVersion = (String) boardClass.getMethod("getVersion").invoke(board);
+            out.write(boardSerial.getBytes(StandardCharsets.UTF_8));
+            out.write(boardManufacturer.getBytes(StandardCharsets.UTF_8));
+            out.write(boardModel.getBytes(StandardCharsets.UTF_8));
+            out.write(boardVersion.getBytes(StandardCharsets.UTF_8));
+
+            // Extract Firmware data.
+            String firmwareName = (String) firmwareClass.getMethod("getName").invoke(firmware);
+            // Not using BIOS version and release date - can be updated.
+            String firmwareDescription = (String) firmwareClass.getMethod("getDescription").invoke(firmware);
+            String firmwareManufacturer = (String) firmwareClass.getMethod("getManufacturer").invoke(firmware);
+            out.write(firmwareName.getBytes(StandardCharsets.UTF_8));
+            out.write(firmwareDescription.getBytes(StandardCharsets.UTF_8));
+            out.write(firmwareManufacturer.getBytes(StandardCharsets.UTF_8));
+
+            // Extract DiscStore[] data.
+            // Not using partitions - can be changed.
+            for (Object disk : disks) {
+                String diskName = (String) diskNameMethod.invoke(disk);
+                String diskModel = (String) diskModelMethod.invoke(disk);
+                String diskSerial = (String) diskSerialMethod.invoke(disk);
+                long diskSize = (long) diskSizeMethod.invoke(disk);
+                out.write(diskName.getBytes(StandardCharsets.UTF_8));
+                out.write(diskModel.getBytes(StandardCharsets.UTF_8));
+                out.write(diskSerial.getBytes(StandardCharsets.UTF_8));
+                out.writeLong(diskSize);
+            }
+
+            // Not using graphics card data in V2, because
+            // OSHI changed it video card data on Windows:
+            // https://github.com/oshi/oshi/pull/2533
+            // and this is bumped between 1.20.4 and 1.20.5.
+            if (this.version < 2) {
+                // Extract GraphicsCard[] data.
+                // Not using version - can be a driver.
+                for (Object card : cards) {
+                    String cardName = (String) cardNameMethod.invoke(card);
+                    String cardId = (String) cardIdMethod.invoke(card);
+                    String cardVendor = (String) cardVendorMethod.invoke(card);
+                    long cardRam = (long) cardRamMethod.invoke(card);
+                    out.write(cardName.getBytes(StandardCharsets.UTF_8));
+                    out.write(cardId.getBytes(StandardCharsets.UTF_8));
+                    out.write(cardVendor.getBytes(StandardCharsets.UTF_8));
+                    out.writeLong(cardRam);
+                }
+            }
+        } catch (Throwable t) {
+            // Log into trace. (disabled for MOST users)
+            LOGGER.trace("Unable to write OSHI data.", t);
         }
     }
 }
