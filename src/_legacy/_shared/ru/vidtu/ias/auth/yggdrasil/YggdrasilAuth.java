@@ -291,7 +291,7 @@ public final class YggdrasilAuth {
                 return YggdrasilAuthResult.fromJson(json);
             } catch (Throwable t) {
                 // Rethrow, trying to remove sensitive data.
-                String message = "Unable to authenticate with '" + server + "' (" + response + " with " + response.headers() + "): " + response.body();
+                String message = "Unable to authenticate with '" + server + "' (HTTP status " + response.statusCode();
                 message = message.replace(password, "[PASSWORD]");
                 throw friendly(new RuntimeException(message, t));
             }
@@ -400,7 +400,7 @@ public final class YggdrasilAuth {
                 return YggdrasilAuthResult.fromJson(json);
             } catch (Throwable t) {
                 // Rethrow, trying to remove sensitive data.
-                String message = "Unable to refresh Yggdrasil session for '" + server + "' (" + response + " with " + response.headers() + "): " + response.body();
+                String message = "Unable to refresh Yggdrasil session for '" + server + "' (HTTP status " + response.statusCode();
                 message = message.replace(accessToken, "[ACCESS]");
                 message = message.replace(clientToken, "[CLIENT]");
                 throw friendly(new RuntimeException(message, t));

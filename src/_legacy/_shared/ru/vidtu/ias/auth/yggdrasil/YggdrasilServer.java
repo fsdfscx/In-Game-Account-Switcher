@@ -21,6 +21,7 @@ package ru.vidtu.ias.auth.yggdrasil;
 
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import ru.vidtu.ias.utils.exceptions.FriendlyException;
 
 /**
  * Located external authentication (Yggdrasil / authlib-injector) server.
@@ -45,6 +46,13 @@ public record YggdrasilServer(@NotNull String apiRoot, @NotNull String name, boo
         apiRoot = apiRoot.strip();
         if (!apiRoot.endsWith("/")) {
             apiRoot = apiRoot + "/";
+        }
+
+        // Refuse an insecure API root. This is also checked when the server is located, but the
+        // value can equally come from the account storage (and, therefore, be tampered with), and
+        // the credentials are sent to it, so it must never be plaintext HTTP.
+        if (!apiRoot.regionMatches(true, 0, "https://", 0, 8)) {
+            throw new FriendlyException("Insecure (non-HTTPS) Yggdrasil server URL: " + apiRoot, "ias.error.yggdrasil.https");
         }
 
         // Flush the fields.

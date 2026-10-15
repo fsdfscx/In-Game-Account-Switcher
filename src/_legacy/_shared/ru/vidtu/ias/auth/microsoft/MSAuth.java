@@ -119,7 +119,7 @@ public final class MSAuth {
                 return DeviceAuth.fromJson(json);
             } catch (Throwable t) {
                 // Rethrow, trying to remove sensitive data.
-                String message = "Unable to request Device Auth Code (DAC) from (" + response + " with " + response.headers() + "): " + response.body();
+                String message = "Unable to request Device Auth Code (DAC) from (HTTP status " + response.statusCode();
                 throw new RuntimeException(message, t);
             }
         }, IAS.executor());
@@ -171,12 +171,12 @@ public final class MSAuth {
 
                     // Declined
                     if ("authorization_declined".equals(error)) {
-                        throw new FriendlyException("Cancelled: " + json, "ias.error.cancel");
+                        throw new FriendlyException("Cancelled via the device auth flow.", "ias.error.cancel");
                     }
 
                     // Pending.
                     if ("authorization_pending".equals(error)) {
-                        throw new DevicePendingException("Pending auth: " + json);
+                        throw new DevicePendingException("Pending auth.");
                     }
 
                     // Other.
@@ -193,7 +193,7 @@ public final class MSAuth {
             return MSTokens.fromJson(json);
         } catch (Throwable t) {
             // Rethrow, trying to remove sensitive data.
-            String message = "Unable to convert Device Auth Code (DAC) to Microsoft Access (MSA) and Microsoft Refresh (MSR) tokens (" + response + " with " + response.headers() + "): " + response.body();
+            String message = "Unable to convert Device Auth Code (DAC) to Microsoft Access (MSA) and Microsoft Refresh (MSR) tokens (HTTP status " + response.statusCode();
             message = message.replace(code, "[DAC]");
             throw new RuntimeException(message, t);
         }
@@ -204,18 +204,20 @@ public final class MSAuth {
      *
      * @param code     Microsoft Authentication Code (MSAC; e.g. from user auth redirect)
      * @param redirect Redirect URL
+     * @param verifier PKCE code verifier that was sent (as a challenge) with the authorization request
      * @return Future that will complete with Microsoft Access (MSA) and Microsoft Refresh (MSR) tokens or exceptionally
      * @see <a href="https://wiki.vg/Microsoft_Authentication_Scheme#Microsoft_OAuth2_Flow">Reference</a>
      * @see #msrToMsaMsr(String)
      */
     @CheckReturnValue
     @NotNull
-    public static CompletableFuture<MSTokens> msacToMsaMsr(@NotNull String code, @NotNull String redirect) {
+    public static CompletableFuture<MSTokens> msacToMsaMsr(@NotNull String code, @NotNull String redirect, @NotNull String verifier) {
         // Create the payload.
         String payload = "client_id=" + IAS.CLIENT_ID +
                 "&code=" + URLEncoder.encode(code, StandardCharsets.UTF_8) +
                 "&grant_type=authorization_code" +
                 "&redirect_uri=" + URLEncoder.encode(redirect, StandardCharsets.UTF_8) +
+                "&code_verifier=" + URLEncoder.encode(verifier, StandardCharsets.UTF_8) +
                 "&scope=XboxLive.signin%20XboxLive.offline_access";
 
         // Send the request.
@@ -241,7 +243,7 @@ public final class MSAuth {
                 return MSTokens.fromJson(json);
             } catch (Throwable t) {
                 // Rethrow, trying to remove sensitive data.
-                String message = "Unable to convert Microsoft Authentication Code (MSAC) to Microsoft Access (MSA) and Microsoft Refresh (MSR) tokens (" + response + " with " + response.headers() + "): " + response.body();
+                String message = "Unable to convert Microsoft Authentication Code (MSAC) to Microsoft Access (MSA) and Microsoft Refresh (MSR) tokens (HTTP status " + response.statusCode();
                 message = message.replace(code, "[MSAC]");
                 throw new RuntimeException(message, t);
             }
@@ -287,7 +289,7 @@ public final class MSAuth {
                 return MSTokens.fromJson(json);
             } catch (Throwable t) {
                 // Rethrow, trying to remove sensitive data.
-                String message = "Unable to convert Microsoft Refresh (MSR) token to Microsoft Access (MSA) and Microsoft Refresh (MSR) tokens (" + response + " with " + response.headers() + "): " + response.body();
+                String message = "Unable to convert Microsoft Refresh (MSR) token to Microsoft Access (MSA) and Microsoft Refresh (MSR) tokens (HTTP status " + response.statusCode();
                 message = message.replace(refresh, "[MSR]");
                 throw new RuntimeException(message, t);
             }
@@ -346,7 +348,7 @@ public final class MSAuth {
                 return XHashedToken.fromJson(json);
             } catch (Throwable t) {
                 // Rethrow, trying to remove sensitive data.
-                String message = "Unable to convert Microsoft Access (MSA) token to Xbox Live (XBL) token (" + response + " with " + response.headers() + "): " + response.body();
+                String message = "Unable to convert Microsoft Access (MSA) token to Xbox Live (XBL) token (HTTP status " + response.statusCode();
                 message = message.replace(authToken, "[MSA]");
                 throw new RuntimeException(message, t);
             }
@@ -434,7 +436,7 @@ public final class MSAuth {
                 return token;
             } catch (Throwable t) {
                 // Rethrow, trying to remove sensitive data.
-                String message = "Unable to convert Xbox Live (XBL) token to Xbox Secure Token Service (XSTS) token (" + response + " with " + response.headers() + "): " + response.body();
+                String message = "Unable to convert Xbox Live (XBL) token to Xbox Secure Token Service (XSTS) token (HTTP status " + response.statusCode();
                 message = message.replace(xbl, "[XBL]");
                 if (hash != null) {
                     message = message.replace(hash, "[HASH]");
@@ -484,7 +486,7 @@ public final class MSAuth {
                 return GSONUtils.getStringOrThrow(json, "access_token");
             } catch (Throwable t) {
                 // Rethrow, trying to remove sensitive data.
-                String message = "Unable to convert Xbox Secure Token Service (XSTS) token to Minecraft Access (MCA) token (" + response + " with " + response.headers() + "): " + response.body();
+                String message = "Unable to convert Xbox Secure Token Service (XSTS) token to Minecraft Access (MCA) token (HTTP status " + response.statusCode();
                 message = message.replace(xsts, "[XSTS]");
                 message = message.replace(hash, "[HASH]");
                 throw new RuntimeException(message, t);
@@ -531,7 +533,7 @@ public final class MSAuth {
                 return MCProfile.fromJson(json);
             } catch (Throwable t) {
                 // Rethrow, trying to remove sensitive data.
-                String message = "Unable to convert Minecraft Access (MCA) token to Minecraft Profile (MCP) (" + response + " with " + response.headers() + "): " + response.body();
+                String message = "Unable to convert Minecraft Access (MCA) token to Minecraft Profile (MCP) (HTTP status " + response.statusCode();
                 message = message.replace(access, "[MCA]");
                 throw new RuntimeException(message, t);
             }
@@ -567,7 +569,7 @@ public final class MSAuth {
                 return MCProfile.fromJson(json);
             } catch (Throwable t) {
                 // Rethrow.
-                throw new RuntimeException("Unable to obtain Minecraft profile by name '" + name + "' (" + response + " with " + response.headers() + "): " + response.body(), t);
+                throw new RuntimeException("Unable to obtain Minecraft profile by name '" + name + "' (HTTP status " + response.statusCode(), t);
             }
         }, IAS.executor());
     }

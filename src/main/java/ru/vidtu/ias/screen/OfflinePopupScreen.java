@@ -144,6 +144,11 @@ public final class OfflinePopupScreen extends Screen {
         // Check for length.
         int length = value.length();
         if (length < 3 || length > 16) {
+            // The Done button is only enabled while Alt is held for such names, so the same
+            // confirmation has to apply here: otherwise pressing Enter in the name box (which
+            // invokes this method directly) would bypass the Alt gate.
+            if (!this.altDown()) return;
+
             // Don't fetch skins for invalid names.
             this.handler.accept(new OfflineAccount(value, null));
 
@@ -156,6 +161,10 @@ public final class OfflinePopupScreen extends Screen {
             // Skip allowed chars.
             int c = value.codePointAt(i);
             if (c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') continue;
+
+            // The Done button is only enabled while Alt is held for such names, so the same
+            // confirmation has to apply here. (see above)
+            if (!this.altDown()) return;
 
             // Don't fetch skins for invalid names.
             this.handler.accept(new OfflineAccount(value, null));
@@ -171,6 +180,21 @@ public final class OfflinePopupScreen extends Screen {
             UUID skin = profile != null ? profile.uuid() : null;
             this.handler.accept(new OfflineAccount(value, skin));
         }, this.minecraft);
+    }
+
+    /**
+     * Gets whether the left Alt key is held down.
+     *
+     * @return Whether Alt is held down
+     */
+    private boolean altDown() {
+        // Bruh.
+        assert this.minecraft != null;
+
+        //? if >=1.21.10 {
+        return this.minecraft.hasAltDown();
+        //?} else
+        /*return Screen.hasAltDown();*/
     }
 
     /**

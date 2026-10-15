@@ -20,9 +20,11 @@
 package ru.vidtu.ias.auth.microsoft;
 
 import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ru.vidtu.ias.IAS;
@@ -40,13 +42,15 @@ import java.io.DataOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ConnectException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.NoRouteToHostException;
-import java.net.URI;
 import java.net.http.HttpTimeoutException;
 import java.nio.channels.UnresolvedAddressException;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.util.Base64;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
@@ -54,7 +58,6 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -73,7 +76,9 @@ public final class MSAuthServer implements Runnable, Closeable {
             "&scope=XboxLive.signin%20XboxLive.offline_access" +
             "&redirect_uri=http://localhost:%%port%%/in_game_account_switcher_long_enough_uri_to_prevent_accidental_leaks_on_screensharing_even_if_you_have_like_extremely_big_screen_though_it_might_not_mork_but_we_will_try_it_anyway_to_prevent_funny_things_from_happening_or_something" +
             "&prompt=select_account" +
-            "&state=%%state%%";
+            "&state=%%state%%" +
+            "&code_challenge=%%challenge%%" +
+            "&code_challenge_method=S256";
 
     /**
      * Redirect URI with one {@code %s} argument to be replaced by port.
@@ -92,12 +97,6 @@ public final class MSAuthServer implements Runnable, Closeable {
      */
     @NotNull
     private static final String STATE_CHARACTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_";
-
-    /**
-     * Data extraction pattern.
-     */
-    @NotNull
-    private static final Pattern DATA_EXTRACT_PATTERN = Pattern.compile("^code=([^&]*)&state=([^&]*)$");
 
     /**
      * Code obfuscation pattern.
@@ -142,6 +141,18 @@ public final class MSAuthServer implements Runnable, Closeable {
     private final String state;
 
     /**
+     * PKCE code verifier, sent when the authorization code is exchanged for tokens.
+     */
+    @NotNull
+    private final String verifier;
+
+    /**
+     * PKCE code challenge (S256 of the {@link #verifier}), sent with the authorization request.
+     */
+    @NotNull
+    private final String challenge;
+
+    /**
      * Bound port.
      * {@code 0} if not yet bound.
      */
@@ -170,14 +181,11 @@ public final class MSAuthServer implements Runnable, Closeable {
             // Create the server.
             this.server = HttpServer.create();
 
-            // Generate the state.
+            // Generate the state and the PKCE pair.
             SecureRandom random = SecureRandom.getInstanceStrong();
-            int length = random.nextInt(96, 128);
-            StringBuilder builder = new StringBuilder(length);
-            for (int i = 0; i < length; i++) {
-                builder.appendCodePoint(STATE_CHARACTERS.codePointAt(random.nextInt(STATE_CHARACTERS.length())));
-            }
-            this.state = builder.toString();
+            this.state = randomString(random, random.nextInt(96, 128));
+            this.verifier = randomString(random, random.nextInt(96, 128));
+            this.challenge = challenge(this.verifier);
         } catch (Throwable t) {
             // Rethrow.
             throw new RuntimeException("Unable to create HTTP server for MS auth.", t);
@@ -197,9 +205,9 @@ public final class MSAuthServer implements Runnable, Closeable {
             // Create the root handler.
             this.server.createContext("/", ex -> {
                 try {
-                    // Close if already requested.
-                    if (this.once) {
-                        LOGGER.debug("IAS: Closed non-once HTTP request to '/'.");
+                    // Close and ignore if not a local request.
+                    if (!this.isLocal(ex)) {
+                        LOGGER.warn("IAS: Closed not loopback HTTP request to '/'.");
                         ex.close();
                         return;
                     }
@@ -207,18 +215,27 @@ public final class MSAuthServer implements Runnable, Closeable {
                     // Log it.
                     LOGGER.info("IAS: Requested HTTP to '/'.");
 
-                    // Close and ignore if not localhost.
-                    if (!ex.getRemoteAddress().getAddress().isLoopbackAddress()) {
-                        LOGGER.warn("IAS: Closed not loopback HTTP request to '/'.");
+                    // Capture the query.
+                    String query = ex.getRequestURI().getQuery();
+
+                    // Validate the state before anything else. A request with a wrong state (e.g.
+                    // from a local process or a DNS-rebound page) must neither consume this
+                    // one-time slot nor abort the authentication that is already in progress.
+                    if (query == null || !this.state.equals(queryValue(query, "state"))) {
+                        LOGGER.warn("IAS: Closed HTTP request to '/' with an invalid state.");
+                        ex.close();
+                        return;
+                    }
+
+                    // Close if already requested.
+                    if (this.once) {
+                        LOGGER.debug("IAS: Closed non-once HTTP request to '/'.");
                         ex.close();
                         return;
                     }
 
                     // Mark as once.
                     this.once = true;
-
-                    // Capture the query.
-                    URI uri = ex.getRequestURI();
 
                     // Get the auth page.
                     byte[] data;
@@ -238,7 +255,7 @@ public final class MSAuthServer implements Runnable, Closeable {
                     headers.add("Content-Type", "text/html; charset=UTF-8");
                     headers.add("Content-Length", Integer.toString(data.length));
                     headers.add("Server", IAS.USER_AGENT);
-                    headers.add("Location", END_URI.formatted(this.port));
+                    headers.add("Location", END_URI.formatted(this.port) + "?state=" + this.state);
                     ex.sendResponseHeaders(302, data.length);
 
                     // Write the response.
@@ -250,7 +267,7 @@ public final class MSAuthServer implements Runnable, Closeable {
                     ex.close();
 
                     // Send the query.
-                    this.auth(uri);
+                    this.auth(query);
 
                     // Close the server.
                     IAS.executor().schedule(this::close, 10L, TimeUnit.SECONDS);
@@ -277,12 +294,21 @@ public final class MSAuthServer implements Runnable, Closeable {
             // Create the end handler. (safe spot)
             this.server.createContext("/end", ex -> {
                 try {
+                    // Close and ignore if not a local request.
+                    if (!this.isLocal(ex)) {
+                        LOGGER.warn("IAS: Closed not loopback request to '/end'.");
+                        ex.close();
+                        return;
+                    }
+
                     // Log it.
                     LOGGER.info("IAS: Requested HTTP to '/end'.");
 
-                    // Close and ignore if not localhost.
-                    if (!ex.getRemoteAddress().getAddress().isLoopbackAddress()) {
-                        LOGGER.warn("IAS: Closed not loopback request to '/end'.");
+                    // Only the flow that received the (state-validated) callback may finish it.
+                    // Without this, any local process could shut the pending authentication down.
+                    String query = ex.getRequestURI().getQuery();
+                    if (query == null || !this.state.equals(queryValue(query, "state"))) {
+                        LOGGER.warn("IAS: Closed HTTP request to '/end' with an invalid state.");
                         ex.close();
                         return;
                     }
@@ -373,8 +399,9 @@ public final class MSAuthServer implements Runnable, Closeable {
         // ports in the UI.
         for (int port : IUtils.tryBindPorts()) {
             try {
-                // Try to bind.
-                this.server.bind(new InetSocketAddress(port), 0);
+                // Bind to the loopback address only, so that the callback is never reachable from
+                // the local network. (InetSocketAddress(int) would bind to 0.0.0.0 instead)
+                this.server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 0);
 
                 // No exception is thrown, return and do not process throwing.
                 this.port = port;
@@ -393,6 +420,100 @@ public final class MSAuthServer implements Runnable, Closeable {
     }
 
     /**
+     * Checks whether the request came from this machine.
+     * <p>
+     * The remote address check alone is not enough: a DNS-rebound page also reaches this server
+     * from the loopback address, so the {@code Host} header is validated as well.
+     *
+     * @param ex Target exchange
+     * @return Whether the request is local
+     */
+    @Contract(pure = true)
+    private boolean isLocal(@NotNull HttpExchange ex) {
+        try {
+            if (!ex.getRemoteAddress().getAddress().isLoopbackAddress()) return false;
+        } catch (Throwable t) {
+            return false;
+        }
+        return isLocalHost(ex.getRequestHeaders().getFirst("Host"));
+    }
+
+    /**
+     * Checks whether the host (with an optional port) points to this machine.
+     *
+     * @param host Target host, {@code null} if absent
+     * @return Whether the host refers to the loopback interface
+     */
+    @Contract(pure = true)
+    private static boolean isLocalHost(@Nullable String host) {
+        if (host == null || host.isEmpty()) return false;
+
+        // Strip the port. (IPv6 literals are bracketed)
+        String name;
+        if (host.charAt(0) == '[') {
+            int end = host.indexOf(']');
+            if (end < 0) return false;
+            name = host.substring(1, end);
+        } else {
+            int colon = host.indexOf(':');
+            name = colon < 0 ? host : host.substring(0, colon);
+        }
+        return name.equalsIgnoreCase("localhost") || name.equals("127.0.0.1") || name.equals("::1");
+    }
+
+    /**
+     * Extracts a value from a (already decoded) query string.
+     *
+     * @param query Target query
+     * @param name  Target parameter name
+     * @return Parameter value, {@code null} if absent
+     */
+    @Contract(pure = true)
+    @Nullable
+    private static String queryValue(@NotNull String query, @NotNull String name) {
+        String prefix = name + "=";
+        for (String part : query.split("&")) {
+            if (part.startsWith(prefix)) return part.substring(prefix.length());
+        }
+        return null;
+    }
+
+    /**
+     * Generates a random string for the state/verifier.
+     *
+     * @param random Random source
+     * @param length Target length
+     * @return Generated string
+     */
+    @Contract(pure = true)
+    @NotNull
+    private static String randomString(@NotNull SecureRandom random, int length) {
+        StringBuilder builder = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            builder.appendCodePoint(STATE_CHARACTERS.codePointAt(random.nextInt(STATE_CHARACTERS.length())));
+        }
+        return builder.toString();
+    }
+
+    /**
+     * Computes the PKCE S256 code challenge for the verifier.
+     *
+     * @param verifier Code verifier
+     * @return Code challenge
+     * @throws RuntimeException If SHA-256 is unavailable
+     */
+    @Contract(pure = true)
+    @NotNull
+    private static String challenge(@NotNull String verifier) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(verifier.getBytes(StandardCharsets.US_ASCII));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
+        } catch (Throwable t) {
+            throw new RuntimeException("Unable to compute the PKCE challenge.", t);
+        }
+    }
+
+    /**
      * Gets the auth URL.
      *
      * @return Auth URL
@@ -402,15 +523,16 @@ public final class MSAuthServer implements Runnable, Closeable {
     public String authUrl() {
         return MICROSOFT_AUTH_URL
                 .replace("%%port%%", Integer.toString(this.port))
-                .replace("%%state%%", this.state);
+                .replace("%%state%%", this.state)
+                .replace("%%challenge%%", this.challenge);
     }
 
     /**
      * Tries to finalize the auth.
      *
-     * @param uri Request URI
+     * @param query Request query. (the state is already validated by the caller)
      */
-    private void auth(@NotNull URI uri) {
+    private void auth(@NotNull String query) {
         try {
             // Stop if cancelled.
             if (this.handler.cancelled()) return;
@@ -418,9 +540,6 @@ public final class MSAuthServer implements Runnable, Closeable {
             // Log it and display progress.
             LOGGER.info("IAS: Processing response...");
             this.handler.stage(MicrosoftAccount.PROCESSING);
-
-            // Extract the query.
-            String query = uri.getQuery();
 
             // Value holders.
             Holder<String> access = new Holder<>();
@@ -447,22 +566,14 @@ public final class MSAuthServer implements Runnable, Closeable {
                             .replaceAll("code=[CODE]"), "ias.error.cancel");
                 }
 
-                // Query won't start with code. Weird query.
-                Matcher matcher = DATA_EXTRACT_PATTERN.matcher(query);
-                if (!matcher.matches()) {
+                // Extract the code. (the state is already validated by the request handler)
+                String code = queryValue(query, "code");
+                if (code == null) {
                     // Throw, suppressing possible another code location.
-                    throw new IllegalStateException("Invalid query: " + CODE_OBFUSCATE_PATTERN.matcher(query)
+                    throw new IllegalStateException("Invalid query (no code): " + CODE_OBFUSCATE_PATTERN.matcher(query)
                             .replaceAll("code=[CODE]"));
                 }
-
-                // Extract and validate the state.
-                String state = matcher.group(2);
-                if (!this.state.equals(state)) {
-                    throw new IllegalStateException("Expected state " + state + ", got " + this.state);
-                }
-
-                // Extract the MSAC.
-                return matcher.group(1);
+                return code;
             }, IAS.executor()).thenComposeAsync(code -> {
                 // Stop if cancelled.
                 if (code == null || this.handler.cancelled()) return CompletableFuture.completedFuture(null);
@@ -472,7 +583,7 @@ public final class MSAuthServer implements Runnable, Closeable {
                 this.handler.stage(MicrosoftAccount.MSAC_TO_MSA_MSR);
 
                 // Convert MSAC to MSA/MSR.
-                return MSAuth.msacToMsaMsr(code, REDIRECT_URI.formatted(this.port));
+                return MSAuth.msacToMsaMsr(code, REDIRECT_URI.formatted(this.port), this.verifier);
             }, IAS.executor()).thenComposeAsync(ms -> {
                 // Stop if cancelled.
                 if (ms == null || this.handler.cancelled()) return CompletableFuture.completedFuture(null);

@@ -71,7 +71,7 @@ public record XHashedToken(@NotNull String token, @NotNull String hash) {
             return new XHashedToken(token, uhs);
         } catch (Throwable t) {
             // Rethrow.
-            throw new JsonParseException("Unable to parse XHashedToken: " + json, t);
+            throw new JsonParseException("Unable to parse XHashedToken.", t);
         }
     }
 }

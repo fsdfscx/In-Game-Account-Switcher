@@ -74,7 +74,7 @@ public record DeviceAuth(@NotNull String device, @NotNull String user, @NotNull 
             return new DeviceAuth(device, user, uri, expire, interval);
         } catch (Throwable t) {
             // Rethrow.
-            throw new JsonParseException("Unable to parse DeviceAuth: " + json, t);
+            throw new JsonParseException("Unable to parse DeviceAuth.", t);
         }
     }
 }

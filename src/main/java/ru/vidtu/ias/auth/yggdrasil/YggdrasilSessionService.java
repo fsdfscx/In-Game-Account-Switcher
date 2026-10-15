@@ -109,7 +109,7 @@ public final class YggdrasilSessionService implements SessionService {
     private static final HttpClient CLIENT = HttpClient.newBuilder()
             .connectTimeout(IAS.TIMEOUT)
             .version(HttpClient.Version.HTTP_2)
-            .followRedirects(HttpClient.Redirect.NORMAL)
+            .followRedirects(HttpClient.Redirect.NEVER)
             .executor(Runnable::run)
             .build();
 

@@ -61,7 +61,7 @@ public final class GSONUtils {
         try {
             return json.get(key).getAsBoolean();
         } catch (Throwable t) {
-            throw new JsonParseException("Expected to have boolean '" + key + "': " + json, t);
+            throw new JsonParseException("Expected to have boolean '" + key + "'.", t);
         }
     }
 
@@ -78,7 +78,7 @@ public final class GSONUtils {
         try {
             return json.get(key).getAsInt();
         } catch (Throwable t) {
-            throw new JsonParseException("Expected to have int '" + key + "': " + json, t);
+            throw new JsonParseException("Expected to have int '" + key + "'.", t);
         }
     }
 
@@ -95,7 +95,7 @@ public final class GSONUtils {
         try {
             return json.get(key).getAsLong();
         } catch (Throwable t) {
-            throw new JsonParseException("Expected to have long '" + key + "': " + json, t);
+            throw new JsonParseException("Expected to have long '" + key + "'.", t);
         }
     }
 
@@ -113,7 +113,7 @@ public final class GSONUtils {
         try {
             return json.get(key).getAsString();
         } catch (Throwable t) {
-            throw new JsonParseException("Expected to have string '" + key + "': " + json, t);
+            throw new JsonParseException("Expected to have string '" + key + "'.", t);
         }
     }
 
@@ -131,7 +131,7 @@ public final class GSONUtils {
         try {
             return json.get(key).getAsJsonObject();
         } catch (Throwable t) {
-            throw new JsonParseException("Expected to have object '" + key + "': " + json, t);
+            throw new JsonParseException("Expected to have object '" + key + "'.", t);
         }
     }
 
@@ -149,7 +149,7 @@ public final class GSONUtils {
         try {
             return json.get(key).getAsJsonArray();
         } catch (Throwable t) {
-            throw new JsonParseException("Expected to have array '" + key + "': " + json, t);
+            throw new JsonParseException("Expected to have array '" + key + "'.", t);
         }
     }
 }

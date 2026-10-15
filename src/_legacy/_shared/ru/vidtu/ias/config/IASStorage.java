@@ -34,7 +34,16 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.AclEntry;
+import java.nio.file.attribute.AclEntryFlag;
+import java.nio.file.attribute.AclEntryPermission;
+import java.nio.file.attribute.AclEntryType;
+import java.nio.file.attribute.AclFileAttributeView;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.nio.file.attribute.UserPrincipal;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -259,6 +268,10 @@ public final class IASStorage {
             // Create parent directories.
             Files.createDirectories(file.getParent());
 
+            // Restrict the storage to the current user. The DOS attributes below only hide it, so
+            // without this the tokens are readable by anyone who can read the game directory.
+            tighten(file.getParent());
+
             // Try to make folder hidden on Windows. (already hidden by name on UNIX-like)
             try {
                 Files.setAttribute(file.getParent(), "dos:hidden", true, LinkOption.NOFOLLOW_LINKS);
@@ -278,11 +291,53 @@ public final class IASStorage {
                     StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE,
                     StandardOpenOption.SYNC, StandardOpenOption.DSYNC, LinkOption.NOFOLLOW_LINKS);
 
+            // Restrict the file itself as well, in case it already existed with wider permissions.
+            tighten(file);
+
             // Log it.
             LOGGER.debug("IAS: Saved {} accounts to {}.", list.length, file);
         } catch (Throwable t) {
             // Rethrow.
             throw new RuntimeException("Unable to save IAS storage.", t);
+        }
+    }
+
+    /**
+     * Tries to restrict the file or directory so that only its owner can access it.
+     * <p>
+     * Best-effort: whatever the file system does not support is ignored, because the storage
+     * must still be saved on file systems without permissions.
+     *
+     * @param path Target file or directory
+     */
+    private static void tighten(@NotNull Path path) {
+        boolean directory = Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS);
+
+        // POSIX permissions. (UNIX-like systems)
+        try {
+            if (Files.getFileAttributeView(path, PosixFileAttributeView.class) != null) {
+                Files.setPosixFilePermissions(path, PosixFilePermissions.fromString(directory ? "rwx------" : "rw-------"));
+            }
+        } catch (Throwable ignored) {
+            // Ignored
+        }
+
+        // Windows ACL: drop the inherited entries and grant the owner only.
+        try {
+            AclFileAttributeView acl = Files.getFileAttributeView(path, AclFileAttributeView.class);
+            if (acl != null) {
+                UserPrincipal owner = acl.getOwner();
+                AclEntry.Builder entry = AclEntry.newBuilder()
+                        .setType(AclEntryType.ALLOW)
+                        .setPrincipal(owner)
+                        .setPermissions(EnumSet.allOf(AclEntryPermission.class));
+                if (directory) {
+                    entry.setFlags(EnumSet.of(AclEntryFlag.FILE_INHERIT, AclEntryFlag.DIRECTORY_INHERIT));
+                }
+                acl.setAcl(List.of(entry.build()));
+            }
+        } catch (Throwable ignored) {
+            // Ignored
         }
     }
 

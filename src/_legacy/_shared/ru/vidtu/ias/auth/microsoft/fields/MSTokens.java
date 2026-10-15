@@ -34,7 +34,7 @@ import ru.vidtu.ias.utils.GSONUtils;
  * @param refresh
  * @author VidTu
  * @apiNote The {@link #access()} provided is not suitable for {@link LoginData#token()}
- * @see MSAuth#msacToMsaMsr(String, String)
+ * @see MSAuth#msacToMsaMsr(String, String, String)
  * @see MSAuth#msrToMsaMsr(String)
  * @see MSAuth#msaToXbl(String)
  */
@@ -58,7 +58,7 @@ public record MSTokens(@NotNull String access, @NotNull String refresh) {
             return new MSTokens(access, refresh);
         } catch (Throwable t) {
             // Rethrow.
-            throw new JsonParseException("Unable to parse MSTokens: " + json, t);
+            throw new JsonParseException("Unable to parse MSTokens.", t);
         }
     }
 }
