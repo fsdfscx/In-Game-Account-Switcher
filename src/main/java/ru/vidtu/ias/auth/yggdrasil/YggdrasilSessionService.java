@@ -285,6 +285,13 @@ public final class YggdrasilSessionService implements SessionService {
                     JsonObject texture = all.getAsJsonObject(type.name());
                     if (!texture.has("url") || !texture.get("url").isJsonPrimitive()) continue;
 
+                    // Skip the textures with a non-HTTP(S) URL. (e.g. "file:", "jar:")
+                    String url = texture.get("url").getAsString();
+                    if (!validTextureUrl(url)) {
+                        LOGGER.warn("IAS: Skipping the '{}' texture of '{}' with an unsupported URL scheme.", type, this.server);
+                        continue;
+                    }
+
                     // Read the metadata. (e.g. the "slim" model marker)
                     Map<String, String> metadata = new HashMap<>(0);
                     if (texture.has("metadata") && texture.get("metadata").isJsonObject()) {
@@ -294,7 +301,7 @@ public final class YggdrasilSessionService implements SessionService {
                     }
 
                     // Put it.
-                    textures.put(type, new MinecraftProfileTexture(texture.get("url").getAsString(), metadata));
+                    textures.put(type, new MinecraftProfileTexture(url, metadata));
                 }
             }
 
@@ -308,6 +315,26 @@ public final class YggdrasilSessionService implements SessionService {
             // Log and fall back to the original session service.
             LOGGER.warn("IAS: Unable to decode the textures of '{}'.", this.server, t);
             return this.delegate.unpackTextures(packedTextures);
+        }
+    }
+
+    /**
+     * Checks whether the texture URL can be safely passed to the game.
+     * <p>
+     * The URL comes from the (user-chosen) authentication server and is used as-is by the game,
+     * so only the HTTP(S) schemes are allowed here. Plain HTTP is intentionally kept, because
+     * self-hosted skin servers in a local network commonly don't have TLS.
+     *
+     * @param url Target texture URL
+     * @return Whether the URL has a supported scheme
+     */
+    @Contract(pure = true)
+    private static boolean validTextureUrl(@NotNull String url) {
+        try {
+            String scheme = URI.create(url).getScheme();
+            return "https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme);
+        } catch (Throwable t) {
+            return false;
         }
     }
 

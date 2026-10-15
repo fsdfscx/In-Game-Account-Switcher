@@ -93,7 +93,7 @@
   "ias.microsoft.password": "Password Crypt",
   "ias.microsoft.password.tip": "Encrypt this account with a password. This is the most secure option. If you forget the password, you will need to add the account into the mod again. WILL protect your account data stored in this mod from MOST malware and accidental sharing with other people.",
   "ias.microsoft.hardware": "Hardware Crypt",
-  "ias.microsoft.hardware.tip": "Encrypt this account with your hardware. This is the less secure, but more convenient. If you change/update your hardware, you may need to add the account into the mod again. MAY protect your data stored in this mod from SOME malware and accidental sharing with other people.",
+  "ias.microsoft.hardware.tip": "Encrypt this account with your hardware. This is the less secure, but more convenient. If you change/update your hardware, you may need to add the account into the mod again. MAY protect your data stored in this mod from SOME malware and accidental sharing with other people. Note: the key is derived from this machine, so the data can't be decrypted on another computer, but it CAN be decrypted by anything running under your user account on this one.",
   "ias.microsoft.plain": "Disable Crypt",
   "ias.microsoft.plain.tip.no": "Do not encrypt this account. This is *NOT SECURE* at all. This option is disabled in the config.",
   "ias.microsoft.plain.tip.off": "Do not encrypt this account. This is *NOT SECURE* at all. Do not use this option unless you know what you're doing. Press %s + %s to enable this option.",

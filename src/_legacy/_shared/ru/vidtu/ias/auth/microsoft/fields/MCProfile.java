@@ -79,7 +79,7 @@ public record MCProfile(@NotNull UUID uuid, @NotNull String name) {
             return new MCProfile(uuid, name);
         } catch (Throwable t) {
             // Rethrow.
-            throw new JsonParseException("Unable to parse MCProfile: " + json, t);
+            throw new JsonParseException("Unable to parse MCProfile.", t);
         }
     }
 }

@@ -25,13 +25,16 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import ru.vidtu.ias.account.Account;
 import ru.vidtu.ias.account.MicrosoftAccount;
 import ru.vidtu.ias.account.OfflineAccount;
 import ru.vidtu.ias.config.IASConfig;
 import ru.vidtu.ias.config.IASStorage;
 import ru.vidtu.ias.config.TextAlign;
-import ru.vidtu.ias.crypt.DummyCrypt;
+import ru.vidtu.ias.crypt.Crypt;
+import ru.vidtu.ias.crypt.HardwareCrypt;
 import ru.vidtu.ias.utils.GSONUtils;
 
 import java.io.ByteArrayOutputStream;
@@ -50,6 +53,12 @@ import java.util.function.Predicate;
  * @author VidTu
  */
 final class MigratorV1 implements Migrator {
+    /**
+     * Logger for this class.
+     */
+    @NotNull
+    private static final Logger LOGGER = LoggerFactory.getLogger("IAS/MigratorV1");
+
     @Override
     public void load(@NotNull JsonObject json) {
         try {
@@ -77,6 +86,7 @@ final class MigratorV1 implements Migrator {
                 JsonObject rawData = GSONUtils.getObjectOrThrow(rawAccount, "data");
 
                 // Create account by type.
+                boolean encryptFailed = false;
                 Account account = switch (type.toLowerCase(Locale.ROOT)) {
                     case "ias:microsoft", "ru.vidtu.ias.account.microsoftaccount" -> {
                         // Extract data.
@@ -93,14 +103,21 @@ final class MigratorV1 implements Migrator {
                             out.writeUTF(refreshToken);
                             unencrypted = byteOut.toByteArray();
                         }
+
+                        // Encrypt the tokens. (the old config stored them as plaintext)
                         byte[] data;
                         try (ByteArrayOutputStream byteOut = new ByteArrayOutputStream(unencrypted.length + 32);
                              DataOutputStream out = new DataOutputStream(byteOut)) {
-                            DummyCrypt crypt = DummyCrypt.INSTANCE;
+                            Crypt crypt = HardwareCrypt.INSTANCE_V2;
                             byte[] encrypted = crypt.encrypt(unencrypted);
                             out.writeUTF(crypt.type());
                             out.write(encrypted);
                             data = byteOut.toByteArray();
+                        } catch (Throwable t) {
+                            // Skip this account rather than failing the whole migration.
+                            LOGGER.warn("IAS: Unable to encrypt the migrated data of '{}', skipping the account.", name, t);
+                            encryptFailed = true;
+                            yield null;
                         }
 
                         // Create.
@@ -115,6 +132,9 @@ final class MigratorV1 implements Migrator {
                     }
                     default -> null;
                 };
+
+                // Skip the accounts that we were unable to encrypt.
+                if (encryptFailed) continue;
 
                 // Add if not-null.
                 if (account == null) return;

@@ -44,8 +44,23 @@ import java.util.Objects;
 
 /**
  * Crypt with "hardware ID".
+ * <p>
+ * The encryption key is derived from the values that stay the same for the same user on the
+ * same machine (hostname, CPU identifiers, user name, user directories, MAC addresses, etc.).
+ * This means the stored data can't be decrypted on <b>another</b> machine, but it can be
+ * decrypted by anything running as the <b>same</b> user on <b>this</b> machine. In other words,
+ * this protects against the config file being copied away (accidental sharing, stealers that
+ * only grab files), not against malware running under the user account.
+ * <p>
+ * Advanced users that want an actual secret in the key (without having to type a password on
+ * every launch) can supply one via the {@code MINECRAFT_IN_GAME_ACCOUNT_SWITCHER_VERY_NERDY_SYSTEM_ENV}
+ * environment variable or the {@code minecraft.inGameAccountSwitcher.veryNerdySystemProperty}
+ * system property. Both are mixed into the derived password, so the key is no longer derived
+ * purely from the publicly readable machine information. Use {@link PasswordCrypt} if you want
+ * the data to be protected by a password instead.
  *
  * @author VidTu
+ * @see PasswordCrypt
  */
 public final class HardwareCrypt implements Crypt {
     /**
